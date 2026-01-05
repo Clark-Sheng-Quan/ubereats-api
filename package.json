@@ -1,0 +1,30 @@
+{
+  "name": "uber-eats-backend",
+  "version": "1.0.0",
+  "description": "Uber Eats Order Webhook Integration - Backend Service",
+  "main": "webhook.js",
+  "type": "module",
+  "scripts": {
+    "start": "node webhook.js",
+    "dev": "NODE_ENV=development node webhook.js",
+    "test-webhook": "node test-webhook.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "uber",
+    "eats",
+    "webhook",
+    "order",
+    "integration"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "body-parser": "^2.2.1",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "node-fetch": "^3.3.0"
+  }
+}
+
