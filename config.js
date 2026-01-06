@@ -1,5 +1,5 @@
 // Uber Eats Configuration
-// Your Basic Auth keys (same as in Uber Dashboard)
+// Your Signing Keys (from Uber Dashboard - used for webhook signature verification)
 export const PRIMARY_KEY = "UE_TEST_KEY_9f3aA72kL1";
 export const SECONDARY_KEY = "UE_TEST_KEY_b81Qp55zX9";
 
@@ -7,15 +7,17 @@ export const SECONDARY_KEY = "UE_TEST_KEY_b81Qp55zX9";
 export const USERNAME = "uber";
 
 // Uber API Configuration
-export const UBER_API_BASE_URL = "https://api.uber.com";
-export const UBER_API_VERSION = "v1";
+// For Sandbox/Test environment
+export const UBER_API_BASE_URL = "https://test-api.uber.com";
+export const UBER_API_VERSION = "v2";
 
 // Your store ID - Replace with your actual store ID
-export const STORE_ID = "your_store_id_here";
+export const STORE_ID = "f9b63b20-ad76-46bc-93bb-76c9e86e9e22";
 
-// OAuth Token - For API calls to get order details
-// You'll need to get this from your Uber Developer Dashboard
-export const UBER_ACCESS_TOKEN = process.env.UBER_ACCESS_TOKEN || "your_access_token_here";
+// OAuth Client Credentials - For automatic token generation
+// Get these from your Uber Developer Dashboard
+export const UBER_CLIENT_ID = process.env.UBER_CLIENT_ID || "Y09XkWICeoPp_4LX6QDZIgVkHk1LK_G8";
+export const UBER_CLIENT_SECRET = process.env.UBER_CLIENT_SECRET || "HEfOndSQ0cAW-BIl8lAQ1cb80U2eCxBM_t1nzrMN";
 
 // Webhook configuration
 export const WEBHOOK_ENDPOINT = "http://localhost:3000/ubereats/webhook";

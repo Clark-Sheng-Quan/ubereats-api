@@ -4,10 +4,10 @@ import { fileURLToPath } from "url";
 import {
   UBER_API_BASE_URL,
   UBER_API_VERSION,
-  UBER_ACCESS_TOKEN,
   WEBHOOK_EVENTS,
   STORAGE_CONFIG,
 } from "./config.js";
+import { getAccessToken } from "./tokenManager.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -89,7 +89,7 @@ async function handleNewOrder(resourceHref, meta) {
 
   try {
     // Fetch complete order details from Uber API
-    const orderDetails = await fetchOrderDetails(orderId);
+    const orderDetails = await fetchOrderDetails(orderId, resourceHref);
     console.log(`   Order ID: ${orderId}`);
     console.log(`   Status: ${orderDetails?.status}`);
     console.log(`   Items: ${orderDetails?.cart?.items?.length || 0}`);
@@ -127,7 +127,7 @@ async function handleScheduledOrder(resourceHref, meta) {
   const orderId = meta?.resource_id;
 
   try {
-    const orderDetails = await fetchOrderDetails(orderId);
+    const orderDetails = await fetchOrderDetails(orderId, resourceHref);
     console.log(`   Order ID: ${orderId}`);
     console.log(`   Scheduled time: ${orderDetails?.scheduled_delivery_time}`);
 
@@ -248,7 +248,7 @@ async function handleFulfillmentResolved(resourceHref, meta) {
   const orderId = meta?.resource_id;
 
   try {
-    const orderDetails = await fetchOrderDetails(orderId);
+    const orderDetails = await fetchOrderDetails(orderId, resourceHref);
     saveOrderToStorage({
       order_id: orderId,
       event_type: "order.fulfillment_issues.resolved",
@@ -277,16 +277,32 @@ async function handleStoreStatusChanged(meta) {
 /**
  * Fetch complete order details from Uber API
  * @param {string} orderId - The order ID
+ * @param {string} resourceHref - The resource URL from webhook (optional)
  * @returns {Promise<Object>} Order details
  */
-export async function fetchOrderDetails(orderId) {
+export async function fetchOrderDetails(orderId, resourceHref = null) {
   try {
-    const url = `${UBER_API_BASE_URL}/${UBER_API_VERSION}/delivery/order/${orderId}?expand=carts,payment`;
+    // Get a valid access token (will use cached or fetch new)
+    const accessToken = await getAccessToken();
+
+    // Use resource_href from webhook if provided, but convert to sandbox
+    let url;
+    if (resourceHref) {
+      // Replace production domain with sandbox test domain
+      url = resourceHref.replace(
+        "https://api.uber.com",
+        "https://test-api.uber.com"
+      );
+      console.log(`   📍 Using webhook resource_href: ${url}`);
+    } else {
+      // Fallback to constructing the URL
+      url = `${UBER_API_BASE_URL}/${UBER_API_VERSION}/eats/orders/${orderId}`;
+    }
 
     const response = await fetch(url, {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${UBER_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },
     });
@@ -295,7 +311,7 @@ export async function fetchOrderDetails(orderId) {
       // If it's a 401, the token might be invalid
       if (response.status === 401) {
         console.error(
-          "⚠️ Authentication failed. Please set UBER_ACCESS_TOKEN environment variable"
+          "⚠️ Authentication failed. Token may be invalid or expired."
         );
         console.log("Returning partial order data from webhook metadata");
         return { partial: true, order_id: orderId };
