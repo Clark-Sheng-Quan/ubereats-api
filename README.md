@@ -1,264 +1,488 @@
-# Uber Eats Webhook Integration - Backend Setup
+# Uber Eats Webhook Integration & POS Management System
 
-这是一个Uber Eats订单获取的后端服务，用于接收Uber Eats订单webhook并处理订单数据。
+A comprehensive backend service for receiving and managing Uber Eats orders through webhooks, with an integrated POS terminal for order operations.
 
-## 项目结构
+## Project Structure
 
 ```
 .
-├── webhook.js           # 主webhook服务器和路由
-├── config.js            # 配置文件（认证密钥、API配置）
-├── orderService.js      # 订单处理核心逻辑
-├── apiRoutes.js         # 管理API端点
-├── package.json         # 依赖配置
-└── data/                # 数据存储目录
-    ├── orders.json      # 订单数据
-    ├── webhook_logs.json # webhook日志
-    └── actions.json     # 操作审计日志
+├── webhook.js               # Webhook server and event handler
+├── config.js                # Configuration (authentication keys, API settings)
+├── orderService.js          # Core order processing logic
+├── orderActions.js          # Uber API client library (all endpoints)
+├── apiRoutes.js             # Express route handlers for REST API
+├── uberRoutes.js            # Uber API integration routes
+├── pos-terminal.js          # Interactive CLI for POS operations
+├── test-webhook.js          # Webhook testing utility
+├── package.json             # Dependencies
+├── apiDoc/                  # API documentation (OpenAPI/Swagger specs)
+│   ├── Order Fulfillment API.json
+│   ├── Marketplace Reporting API.json
+│   ├── Integration Activation & Configuration API Suite.json
+│   └── ...
+└── data/                    # Data storage directory
+    ├── orders.json          # Order records
+    ├── webhook_logs.json    # Webhook event logs
+    └── actions.json         # Operation audit logs
 ```
 
-## 功能概览
+## Features Overview
 
-### 1. Webhook事件处理
-支持以下Uber Eats webhook事件：
+### 1. Webhook Event Processing
+Handles all major Uber Eats webhook events:
 
-| 事件 | 说明 | 用途 |
-|-----|------|------|
-| `orders.notification` | 新订单创建 | 获取新订单，推送到POS |
-| `orders.scheduled.notification` | 预定订单 | 处理预定订单 |
-| `orders.release` | 快递员到达地理围栏 | 订单准备交付 |
-| `orders.cancel` | 订单取消 | 更新订单状态 |
-| `orders.failure` | 订单失败 | 记录失败订单 |
-| `store.provisioned` | 门店授权 | 门店接入 |
-| `store.deprovisioned` | 门店撤销授权 | 门店移除 |
-| `order.fulfillment_issues.resolved` | 履行问题已解决 | 继续处理订单 |
-| `store.status.changed` | 门店状态改变 | 更新门店状态 |
+| Event | Description | Purpose |
+|-------|-------------|---------|
+| `orders.notification` | New order received | Fetch order details, push to POS |
+| `orders.scheduled.notification` | Scheduled order | Handle future orders |
+| `orders.release` | Delivery partner near geofence | Prepare for handoff |
+| `orders.cancel` | Order cancelled | Update order status |
+| `orders.failure` | Order failed | Log failures |
+| `delivery.state_changed` | Delivery status updated | Track delivery progress |
+| `orders.fulfillment_issues.resolved` | Issue resolved by customer | Continue processing |
 
-### 2. 订单详情获取
-- 自动从Uber API获取完整订单信息
-- 包含客户信息、商品清单、支付信息等
-- 使用Bearer token认证
+### 2. Uber API Endpoints (Fully Implemented)
+- **GET** `/v1/delivery/order/{order_id}` - Fetch single order details
+- **GET** `/v1/delivery/store/{store_id}/orders` - List all store orders
+- **POST** `/v1/delivery/order/{order_id}/accept` - Accept order
+- **POST** `/v1/delivery/order/{order_id}/deny` - Deny order with reason
+- **POST** `/v1/delivery/order/{order_id}/cancel` - Cancel order
+- **POST** `/v1/delivery/order/{order_id}/ready` - Mark order ready
+- **POST** `/v1/delivery/order/{order_id}/adjust-price` - Adjust pricing
+- **POST** `/v1/delivery/order/{order_id}/update-ready-time` - Update ready time
+- **POST** `/v1/delivery/order/{order_id}/resolve-fulfillment-issues` - Handle out of stock items
 
-### 3. 数据存储
-- 基于文件的存储（JSON格式）
-- 方便调试和查看
-- 可以后续迁移到数据库
+### 3. POS Terminal Interface
+Interactive CLI for managing orders:
+- View orders (local storage)
+- Get detailed order information from Uber API
+- List all store orders with complete details
+- Accept/Deny orders with proper reason codes
+- Mark orders as ready for pickup
+- Update preparation times
+- Adjust prices with tax rates
+- Report fulfillment issues
 
-### 4. 管理API
-提供REST API接口管理订单和查看统计数据
+### 4. Data Storage
+- File-based JSON storage (easily upgradeable to database)
+- Webhook event logging for audit trails
+- Operation history tracking
+- Easy debugging and data inspection
 
-## 快速开始
+## Getting Started
 
-### 1. 环境配置
+### Prerequisites
+- Node.js 16+ 
+- npm or yarn
+- Uber Eats Marketplace Account with API access
+- ngrok (for exposing local server to internet)
 
-编辑 `config.js` 文件，更新以下信息：
+### 1. Environment Configuration
+
+Edit `config.js` with your credentials:
 
 ```javascript
-// 你的认证密钥（从Uber Dashboard获取）
+// Webhook authentication keys (from Uber Dashboard)
 export const PRIMARY_KEY = "UE_TEST_KEY_9f3aA72kL1";
 export const SECONDARY_KEY = "UE_TEST_KEY_b81Qp55zX9";
 
-// 你的门店ID
+// Your store ID
 export const STORE_ID = "your_store_id_here";
 
-// Uber OAuth访问令牌（用于API调用）
+// Uber OAuth access token (for API calls)
 export const UBER_ACCESS_TOKEN = process.env.UBER_ACCESS_TOKEN || "your_access_token_here";
 ```
 
-### 2. 设置环境变量（推荐）
+### 2. Set Environment Variables (Recommended)
 
 ```bash
 export UBER_ACCESS_TOKEN="your_actual_token_here"
 ```
 
-### 3. 安装依赖
+### 3. Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 4. 启动服务
+### 4. Start Webhook Server
 
 ```bash
 node webhook.js
 ```
 
-输出示例：
+Expected output:
 ```
 🚀 Uber Eats Webhook server running on port 3000
 Listening for webhooks at: http://localhost:3000/ubereats/webhook
+📡 API Endpoints:
+   Local: http://localhost:3000/api/local
+   Uber: http://localhost:3000/api/uber
 ```
 
-### 5. 使用ngrok暴露到公网
+### 5. Expose to Internet with ngrok
 
 ```bash
 ngrok http 3000
 ```
 
-复制`https://xxxx-xx-xxx-xx-xx.ngrok.io`到Uber Developer Dashboard的Webhook URL。
+Copy the `https://xxxx-xx-xxx-xx-xx.ngrok.io` URL to your Uber Developer Dashboard Webhook URL configuration.
 
-## API使用示例
+### 6. Run POS Terminal (separate terminal)
 
-### 获取所有订单
 ```bash
-curl http://localhost:3000/api/orders
+node pos-terminal.js
 ```
 
-### 按状态筛选订单
+## REST API Endpoints
+
+### Local Order Management
+
+**Get all orders**
 ```bash
-curl http://localhost:3000/api/orders?status=pending&limit=20
+curl http://localhost:3000/api/local/orders
 ```
 
-### 获取特定订单
+**Filter by status**
 ```bash
-curl http://localhost:3000/api/orders/{orderId}
+curl http://localhost:3000/api/local/orders?status=pending&limit=20
 ```
 
-### 获取订单详情（从Uber API）
+**Get specific order**
 ```bash
-curl http://localhost:3000/api/orders/{orderId}/details
+curl http://localhost:3000/api/local/orders/{orderId}
 ```
 
-### 更新订单状态
+**Clear all records**
 ```bash
-curl -X PATCH http://localhost:3000/api/orders/{orderId}/status \
+curl -X POST http://localhost:3000/api/local/orders/clear
+```
+
+### Uber API Operations
+
+**Get order details from Uber**
+```bash
+curl http://localhost:3000/api/uber/orders/{orderId}?expand=carts,deliveries,payment
+```
+
+**List store orders**
+```bash
+curl http://localhost:3000/api/uber/store/orders?expand=carts&state=OFFERED
+```
+
+**Accept order**
+```bash
+curl -X POST http://localhost:3000/api/uber/orders/{orderId}/accept \
   -H "Content-Type: application/json" \
-  -d '{"status": "sent_to_pos"}'
+  -d '{"ready_for_pickup_time": "2026-01-07T17:30:00Z"}'
 ```
 
-### 获取统计信息
+**Deny order**
 ```bash
-curl http://localhost:3000/api/stats
+curl -X POST http://localhost:3000/api/uber/orders/{orderId}/deny \
+  -H "Content-Type: application/json" \
+  -d '{"deny_reason": "STORE_CLOSED"}'
 ```
 
-### 健康检查
+**Mark order ready**
+```bash
+curl -X POST http://localhost:3000/api/uber/orders/{orderId}/ready \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Adjust order price**
+```bash
+curl -X POST http://localhost:3000/api/uber/orders/{orderId}/adjust-price \
+  -H "Content-Type: application/json" \
+  -d '{
+    "amount_e5": 100000,
+    "tax_rate": "8.75",
+    "reason": "NEW_ITEM_ADDED"
+  }'
+```
+
+**Update ready time**
+```bash
+curl -X POST http://localhost:3000/api/uber/orders/{orderId}/update-ready-time \
+  -H "Content-Type: application/json" \
+  -d '{"ready_for_pickup_time": "2026-01-07T17:45:00Z"}'
+```
+
+**Report fulfillment issues**
+```bash
+curl -X POST http://localhost:3000/api/uber/orders/{orderId}/resolve-fulfillment-issues \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fulfillment_issues": [{
+      "root_item": {"cart_item_id": "item_123"},
+      "fulfillment_action": {"action_type": "ASK_CUSTOMER"},
+      "fulfillment_issue_type": "OUT_OF_ITEM"
+    }]
+  }'
+```
+
+### Health & Stats
+
+**Health check**
 ```bash
 curl http://localhost:3000/health
 ```
 
-## 订单流程
+**Get statistics**
+```bash
+curl http://localhost:3000/api/local/stats
+```
 
-### 典型的订单生命周期
+## Order Lifecycle
 
-1. **新订单到达** → `orders.notification` webhook
-   - 服务器接收webhook
-   - 验证Basic Auth认证
-   - 从Uber API获取完整订单详情
-   - 保存订单到本地存储
-   - 推送到你的POS系统
+### Typical Order Flow
 
-2. **订单准备** → 手动更新状态
-   - 通过API更新订单状态
+1. **Order Received** → `orders.notification` webhook
+   - Server validates webhook signature
+   - Fetches complete order details from Uber API
+   - Saves to local storage
+   - Logs to webhook audit trail
 
-3. **快递员接近** → `orders.release` webhook
-   - 收到消息表示快递员到达地理围栏
-   - 准备订单交付
+2. **Order Processing** → POS Terminal
+   - View order in POS terminal
+   - Accept or deny order
+   - Update preparation status
 
-4. **订单完成/取消**
-   - `orders.cancel` - 订单被取消
-   - `orders.failure` - 订单失败
+3. **Delivery Partner Arrives** → `orders.release` webhook
+   - Delivery partner is near pickup location
+   - Prepare order for handoff
 
-## 数据存储位置
+4. **Order Completion**
+   - Mark as ready for pickup
+   - Delivery partner picks up and delivers
+   - System receives delivery updates
 
-### orders.json
+5. **Order Fulfillment**
+   - `orders.failure` webhook if issues occur
+   - `delivery.state_changed` updates
+   - Order stored for records
+
+## Data Storage Details
+
+### orders.json Format
 ```json
-[
-  {
-    "order_id": "uuid",
-    "event_type": "orders.notification",
-    "resource_href": "https://api.uber.com/v1/delivery/order/...",
-    "order_details": {
-      "customer": { ... },
-      "cart": { "items": [...] },
-      "status": "...",
-      ...
-    },
-    "received_at": "2024-01-05T10:30:00Z",
-    "status": "pending",
-    "updated_at": "2024-01-05T10:31:00Z"
+{
+  "order_id": "504f22ed-abde-44f5-96a4-5fce03c80c08",
+  "display_id": "80C08",
+  "state": "OFFERED",
+  "status": "ACTIVE",
+  "ordering_platform": "UBER_EATS",
+  "store": {
+    "id": "f9b63b20-ad76-46bc-93bb-76c9e86e9e22",
+    "name": "Store Name",
+    "timezone": "Australia/Sydney"
+  },
+  "customers": [{
+    "id": "37dfb351-e48b-5fb5-a52c-7c7c817178d7",
+    "name": {"display_name": "Customer Name"},
+    "contact": {"phone": {"number": "+61 480 020 263"}}
+  }],
+  "carts": [{
+    "items": [{
+      "id": "item_123",
+      "title": "Best Burger",
+      "quantity": {"amount": 1, "unit": "PIECE"},
+      "picture_url": "https://..."
+    }]
+  }],
+  "payment": {
+    "payment_detail": {
+      "order_total": {"gross": {"formatted": "A$15.00"}},
+      "item_charges": {...},
+      "fees": {...}
+    }
+  },
+  "created_time": "2026-01-07T16:24:52+11:00",
+  "preparation_time": {
+    "ready_for_pickup_time_secs": 900,
+    "ready_for_pickup_time": "2026-01-07T16:39:52+11:00"
+  },
+  "action_eligibility": {
+    "cancel": {"is_eligible": true},
+    "adjust_ready_for_pickup_time": {"is_eligible": true}
   }
-]
-```
-
-### webhook_logs.json
-记录所有接收的webhook事件，用于调试和审计。
-
-### actions.json
-记录系统执行的所有操作，包括订单接收、推送到POS等。
-
-## 与POS系统集成
-
-当前代码在`orderService.js`的`handleNewOrder()`函数中有以下注释：
-
-```javascript
-// TODO: Push to POS system here
-```
-
-这是你需要添加POS推送逻辑的地方。例如：
-
-```javascript
-// 推送到POS系统示例
-const posResponse = await pushOrderToPOS(orderDetails);
-if (posResponse.success) {
-  updateOrderStatus(orderId, "sent_to_pos");
 }
 ```
 
-## 调试技巧
+### webhook_logs.json
+Records all received webhook events with:
+- Event ID and type
+- Event timestamp
+- Resource reference
+- Full event payload
+- Processing status
 
-### 1. 查看最新webhook日志
+### actions.json
+Audit trail of all system operations:
+- Order acceptance/denial
+- Price adjustments
+- Status updates
+- Error records
+- API responses
+
+## POS Terminal Usage
+
+### Main Menu Options
+
+```
+【Local Operations】
+1. View Orders (local storage)
+2. Clear All Records
+
+【Uber API Operations】
+3. Get Order Details (single order)
+4. List Store Orders (all orders)
+5. Accept Order
+6. Deny Order
+7. Cancel Order
+8. Mark Order Ready
+9. Update Ready Time
+10. Adjust Order Price
+11. Resolve Fulfillment Issues
+
+0. Exit
+```
+
+### Example: Accept Order
+
+```
+Enter order ID: order-uuid-here
+✅ Order accepted successfully! (Uber API)
+```
+
+### Example: Deny Order
+
+```
+Enter order ID: order-uuid-here
+Select deny reason:
+1. STORE_CLOSED
+2. ITEM_ISSUE
+3. RESTAURANT_TOO_BUSY
+4. CAPACITY
+5. OTHER
+
+Enter reason: 1
+✅ Order denied successfully! (Uber API)
+```
+
+## Debugging
+
+### View webhook logs
 ```bash
 tail -f data/webhook_logs.json
 ```
 
-### 2. 查看订单数据
+### View order data
 ```bash
 cat data/orders.json | jq '.' | less
 ```
 
-### 3. 启用详细日志
-在terminal中观察控制台输出，所有webhook事件都会被打印。
+### Check console output
+The webhook server logs all events and API calls to console in real-time.
 
-### 4. 使用Postman测试webhook
-- 导入Uber提供的Postman Collection
-- 用你的localhost + ngrok URL测试webhook
-
-## 常见问题
-
-### Q: 收不到webhook？
-A: 
-1. 检查Webhook URL是否在Uber Dashboard中正确配置
-2. 确认Basic Auth密钥与Dashboard一致
-3. 检查ngrok是否正常运行
-4. 查看控制台日志是否显示请求
-
-### Q: 无法获取订单详情？
-A:
-1. 确认UBER_ACCESS_TOKEN已正确设置
-2. 检查token是否有`eats.order`权限
-3. 查看错误信息中的HTTP状态码
-
-### Q: 如何清除订单数据？
-A:
+### Test webhook locally
 ```bash
-rm data/orders.json data/webhook_logs.json data/actions.json
+node test-webhook.js
 ```
 
-## 下一步
+## Error Handling
 
-1. **POS集成** - 实现`pushOrderToPOS()`函数
-2. **数据库迁移** - 从文件存储迁移到SQLite/PostgreSQL
-3. **错误处理** - 添加重试机制和错误恢复
-4. **监控告警** - 集成monitoring和alerting
-5. **认证增强** - 添加更复杂的认证机制
-6. **单元测试** - 添加测试覆盖
+All API responses follow a consistent format:
 
-## 参考文档
+**Success Response**
+```json
+{
+  "success": true,
+  "data": {...}
+}
+```
 
-- [Uber Eats Marketplace API文档](https://developer.uber.com/docs/eats)
-- [Order Fulfillment API](https://developer.uber.com/docs/eats/references/api/v1/delivery-order)
-- [Integration Configuration API](https://developer.uber.com/docs/eats/references/api/integration_activation_suite)
+**Error Response**
+```json
+{
+  "error": "Error message describing what went wrong"
+}
+```
 
-## 许可证
+## Common Issues & Solutions
+
+### Q: Not receiving webhooks?
+A:
+1. Verify Webhook URL is correctly configured in Uber Dashboard
+2. Check Basic Auth credentials match (PRIMARY_KEY/SECONDARY_KEY)
+3. Ensure ngrok is running and URL is current
+4. Check server logs for request errors
+5. Test with `test-webhook.js`
+
+### Q: Cannot fetch order details?
+A:
+1. Verify UBER_ACCESS_TOKEN is set and valid
+2. Check token has `eats.order` scope
+3. Verify order ID is correct
+4. Check error message in response
+
+### Q: "Order not in correct state" error?
+A:
+1. Some operations require specific order states (e.g., OFFERED)
+2. Check current order state: `State: OFFERED | Status: ACTIVE`
+3. Only eligible actions are available per `action_eligibility`
+
+### Q: Clear all order data?
+A:
+```bash
+rm data/*.json
+```
+
+Or use POS terminal: Option 2 → Confirm
+
+## Configuration Options
+
+### config.js
+```javascript
+export const PRIMARY_KEY = ""; // Webhook primary auth key
+export const SECONDARY_KEY = ""; // Webhook secondary auth key
+export const STORE_ID = ""; // Your Uber store ID
+export const UBER_ACCESS_TOKEN = ""; // OAuth access token
+export const WEBHOOK_PORT = 3000; // Server port
+```
+
+### Command Line Options
+```bash
+# Custom API URL
+API_URL=http://other-server:3000 node pos-terminal.js
+
+# Custom store ID (if needed)
+STORE_ID=custom_id node webhook.js
+```
+
+## Next Steps
+
+1. **Database Migration** - Move from JSON to SQLite/PostgreSQL
+2. **Error Recovery** - Add retry logic and error handling
+3. **Monitoring** - Integrate logging and alerting systems
+4. **Enhanced Auth** - Implement OAuth flow
+5. **Testing** - Add comprehensive unit/integration tests
+6. **Deployment** - Docker containerization and cloud deployment
+
+## API Reference
+
+Complete OpenAPI/Swagger specifications available in `apiDoc/`:
+- **Order Fulfillment API.json** - All order operations
+- **Integration Activation & Configuration API Suite.json** - Webhook configuration
+- **Marketplace Reporting API.json** - Analytics and reporting
+
+## Documentation
+
+- [Uber Eats Developer Docs](https://developer.uber.com/docs/eats)
+- [Order Fulfillment API Reference](https://developer.uber.com/docs/eats/references/api/v1/delivery-order)
+- [Integration Configuration](https://developer.uber.com/docs/eats/references/api/integration_activation_suite)
+
+## License
 
 MIT
