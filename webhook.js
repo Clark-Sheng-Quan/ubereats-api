@@ -2,12 +2,16 @@ import express from "express";
 import bodyParser from "body-parser";
 import crypto from "crypto";
 import { handleWebhookEvent } from "./orderService.js";
-import apiRoutes from "./apiRoutes.js";
+import localRoutes from "./localRoutes.js";
+import uberRoutes from "./uberRoutes.js";
 import { PRIMARY_KEY, SECONDARY_KEY } from "./config.js";
 
 const app = express();
 app.use(bodyParser.json());
-app.use("/api", apiRoutes);
+
+// Register route groups
+app.use("/api/local", localRoutes);
+app.use("/api/uber", uberRoutes);
 
 /**
  * Verify Uber webhook signature using HMAC-SHA256
@@ -34,7 +38,6 @@ app.post("/ubereats/webhook", (req, res) => {
   const signature = req.headers["x-uber-signature"];
   const rawBody = JSON.stringify(req.body);
 
-  console.log("🔍 Signature received:", signature);
 
   // Try to verify with primary key first, then secondary key
   const isValidPrimary = verifyWebhookSignature(signature, rawBody, PRIMARY_KEY);
@@ -49,16 +52,11 @@ app.post("/ubereats/webhook", (req, res) => {
     return res.sendStatus(401);
   }
 
-  console.log("✅ Valid webhook signature verified");
 
   (async () => {
     try {
       const webhookData = req.body;
       console.log("✅ Valid webhook received:", webhookData.event_type);
-      console.log(
-        "📊 Webhook details:",
-        JSON.stringify(webhookData, null, 2)
-      );
 
       // Handle the webhook event asynchronously
       await handleWebhookEvent(webhookData);

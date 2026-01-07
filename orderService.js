@@ -8,6 +8,7 @@ import {
   STORAGE_CONFIG,
 } from "./config.js";
 import { getAccessToken } from "./tokenManager.js";
+import { acceptOrder } from "./orderActions.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -105,7 +106,7 @@ async function handleNewOrder(resourceHref, meta) {
     });
 
     // TODO: Push to POS system here
-    console.log(`   ✅ Order saved and ready for POS`);
+    console.log(`   📋 Order saved, waiting for POS confirmation`);
 
     // Log action
     logAction(orderId, "order_received", {
