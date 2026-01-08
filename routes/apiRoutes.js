@@ -4,7 +4,7 @@ import {
   getOrderById,
   updateOrderStatus,
   fetchOrderDetails,
-} from "./orderService.js";
+} from "../services/orderService.js";
 import {
   acceptOrder,
   denyOrder,
@@ -12,7 +12,7 @@ import {
   cancelOrder,
   DENY_REASONS,
   CANCEL_REASONS,
-} from "./orderActions.js";
+} from "../services/orderActions.js";
 
 const router = express.Router();
 

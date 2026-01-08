@@ -3,8 +3,8 @@
  * Handles ALL Uber API order operations
  */
 
-import { UBER_API_BASE_URL, UBER_API_VERSION, STORE_ID } from "./config.js";
-import { getAccessToken } from "./tokenManager.js";
+import { UBER_API_BASE_URL, UBER_API_VERSION, STORE_ID } from "../config/config.js";
+import { getAccessToken } from "../utils/tokenManager.js";
 
 /**
  * Accept an order

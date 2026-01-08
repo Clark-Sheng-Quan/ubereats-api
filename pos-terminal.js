@@ -15,10 +15,12 @@ import readline from "readline";
 const API_BASE_URL = process.env.API_URL || "http://localhost:3000";
 const LOCAL_API = `${API_BASE_URL}/api/local`;
 const UBER_API = `${API_BASE_URL}/api/uber`;
+const STORE_API = `${API_BASE_URL}/api/store`;
 
 console.log(`📡 API Endpoints:`);
 console.log(`   Local API: ${LOCAL_API}`);
-console.log(`   Uber API:  ${UBER_API}\n`);
+console.log(`   Uber API:  ${UBER_API}`);
+console.log(`   Store API: ${STORE_API}\n`);
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -264,19 +266,27 @@ function displayOrders(orders) {
 
 async function mainMenu() {
   console.log("\n🎯 ===== MAIN MENU =====");
-  console.log("【本地数据操作 (Local)】");
-  console.log("1. View Orders (查看本地订单)");
-  console.log("2. Clear All Records (清空本地记录)");
-  console.log("\n【Uber API 操作】");
-  console.log("3. Get Order Details (获取单个订单详情)");
-  console.log("4. List Store Orders (列出商店所有订单)");
-  console.log("5. Accept Order (接受订单)");
-  console.log("6. Deny Order (拒绝订单)");
-  console.log("7. Cancel Order (取消订单)");
-  console.log("8. Mark Order Ready (标记准备好)");
-  console.log("9. Update Ready Time (更新准备时间)");
-  console.log("10. Adjust Order Price (调整价格)");
-  console.log("11. Resolve Fulfillment Issues (报告缺货)");
+  console.log("【Local Data Operations】");
+  console.log("1. View Orders");
+  console.log("2. Clear All Records");
+  console.log("\n【Uber API Operations】");
+  console.log("3. Get Order Details");
+  console.log("4. List Store Orders");
+  console.log("5. Accept Order");
+  console.log("6. Deny Order");
+  console.log("7. Cancel Order");
+  console.log("8. Mark Order Ready");
+  console.log("9. Update Ready Time");
+  console.log("10. Adjust Order Price");
+  console.log("11. Resolve Fulfillment Issues");
+  console.log("\n【Store Management】");
+  console.log("12. List Stores");
+  console.log("13. Get Store Details");
+  console.log("14. Get Store Statu");
+  console.log("15. Update Store Status (Online/Offline)");
+  console.log("16. Update Store Info");
+  console.log("17. Update Prep Time");
+  console.log("18. Update Fulfillment Config");
   console.log("\n0. Exit");
   console.log("====================================\n");
 
@@ -315,6 +325,27 @@ async function mainMenu() {
       break;
     case "11":
       await reportIssueFlow();
+      break;
+    case "12":
+      await listStoresFlow();
+      break;
+    case "13":
+      await getStoreDetailsFlow();
+      break;
+    case "14":
+      await getStoreStatusFlow();
+      break;
+    case "15":
+      await updateStoreStatusFlow();
+      break;
+    case "16":
+      await updateStoreInfoFlow();
+      break;
+    case "17":
+      await updatePrepTimeFlow();
+      break;
+    case "18":
+      await updateFulfillmentConfigFlow();
       break;
     case "0":
       console.log("👋 Goodbye!");
@@ -1046,6 +1077,495 @@ async function fetchFromUberFlow() {
     console.error("❌ Error:", error.message);
   }
   
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+async function fetchAndDisplayStores() {
+  console.log("\n📋 Fetching stores...");
+  try {
+    const response = await fetch(`${STORE_API}/list`);
+    const result = await response.json();
+
+    if (result.stores) {
+      console.log(`\n✅ Found ${result.stores.length} stores:`);
+      result.stores.forEach((store, index) => {
+        console.log(`\n[${index + 1}] ${store.name || "N/A"}`);
+        console.log(`    ID: ${store.id}`);
+        console.log(`    Status: ${store.onboarding_status || "N/A"}`);
+        if (store.location) {
+          console.log(`    Address: ${store.location.street_address_line_one}, ${store.location.city}`);
+        }
+      });
+      return result.stores;
+    } else {
+      console.error("❌ Failed to list stores:", result.error || "Unknown error");
+      return [];
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+    return [];
+  }
+}
+
+async function listStoresFlow() {
+  await fetchAndDisplayStores();
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+async function getStoreDetailsFlow() {
+  // Reuse listStores to help user pick an ID
+  const stores = await fetchAndDisplayStores();
+  
+  const input = await question("\nEnter Store ID (or number from list): ");
+  if (!input.trim()) {
+    await mainMenu();
+    return;
+  }
+
+  // Check if input is a number (store index)
+  const storeIndex = parseInt(input.trim()) - 1;
+  let storeId;
+
+  if (!isNaN(storeIndex) && storeIndex >= 0 && storeIndex < stores.length) {
+    storeId = stores[storeIndex].id;
+  } else {
+    storeId = input.trim();
+  }
+
+  try {
+    console.log(`\n📥 Fetching details for store: ${storeId}`);
+    const response = await fetch(`${STORE_API}/${storeId}`);
+    const result = await response.json();
+
+    // Handle both { store: {...} } and direct object formats
+    const store = result.store || result;
+
+    if (store && store.id) {
+      console.log("\n✅ Store Details:");
+      console.log(`   Name: ${store.name}`);
+      console.log(`   ID: ${store.id}`);
+      console.log(`   Timezone: ${store.timezone}`);
+      console.log(`   Support: ${store.support_number || "N/A"}`);
+      
+      if (store.contact) {
+        console.log(`   Contact: ${store.contact.name} (${store.contact.email || "No email"})`);
+      }
+      
+      if (store.location) {
+        console.log(`   Location: ${store.location.street_address_line_one}, ${store.location.city}, ${store.location.postal_code}`);
+      }
+
+      if (store.orderability) {
+        console.log("\n   Orderability:");
+        console.log(`     Status: ${store.orderability.status}`);
+        console.log(`     Visible: ${store.orderability.is_visible}`);
+        console.log(`     Orderable: ${store.orderability.is_orderable}`);
+        if (store.orderability.offline_reason) {
+          console.log(`     Offline Reason: ${store.orderability.offline_reason}`);
+        }
+        if (store.orderability.is_offline_until) {
+          console.log(`     Offline Until: ${store.orderability.is_offline_until}`);
+        }
+      }
+
+      if (store.fulfillment_type_availability) {
+        console.log("\n   Fulfillment Types:");
+        Object.entries(store.fulfillment_type_availability).forEach(([type, avail]) => {
+          console.log(`     - ${type}: ${avail ? "✅" : "❌"}`);
+        });
+      }
+
+      if (store.prep_times) {
+        console.log("\n   Preparation Time:");
+        console.log(`     Default: ${store.prep_times.default_value ? Math.round(store.prep_times.default_value / 60) + " min" : "N/A"}`);
+      }
+
+    } else {
+      console.error("❌ Failed to get store details:", result.error || "Unknown error");
+    }
+
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+async function updateStoreStatusFlow() {
+  const stores = await fetchAndDisplayStores();
+  
+  const input = await question("\nEnter Store ID (or number from list): ");
+  if (!input.trim()) {
+    await mainMenu();
+    return;
+  }
+  
+  // Check if input is a number (store index)
+  const storeIndex = parseInt(input.trim()) - 1;
+  let storeId;
+
+  if (!isNaN(storeIndex) && storeIndex >= 0 && storeIndex < stores.length) {
+    storeId = stores[storeIndex].id;
+  } else {
+    storeId = input.trim();
+  }
+
+  console.log("\nSelect Status:");
+  console.log("1. ONLINE");
+  console.log("2. OFFLINE");
+  
+  const statusChoice = await question("Choice (1-2): ");
+  const status = statusChoice.trim() === "1" ? "ONLINE" : "OFFLINE";
+  
+  let reason, is_offline_until;
+  
+  if (status === "OFFLINE") {
+    console.log("\nOffline Reasons:");
+    console.log("1. TEMPORARILY_CLOSED - Temporarily closed");
+    console.log("2. PERMANENTLY_CLOSED - Permanently closed");
+    console.log("3. KITCHEN_CLOSED - Kitchen closed");
+    console.log("4. OTHER - Other reason");
+    
+    const reasonChoice = await question("Select reason (1-4, or press Enter to skip): ");
+    
+    const offlineReasons = {
+      "1": "TEMPORARILY_CLOSED",
+      "2": "PERMANENTLY_CLOSED",
+      "3": "KITCHEN_CLOSED",
+      "4": "OTHER",
+    };
+    
+    if (reasonChoice.trim() && offlineReasons[reasonChoice.trim()]) {
+      reason = offlineReasons[reasonChoice.trim()];
+    }
+    
+    // Ask for offline duration (required when setting to OFFLINE)
+    let validDuration = false;
+    while (!validDuration) {
+      const durationInput = await question("\nHow long offline? (minutes, default 15, or press Enter for 15 min): ");
+      
+      let minutes = 15; // Default to 15 minutes
+      
+      if (durationInput.trim()) {
+        minutes = parseInt(durationInput.trim());
+        
+        if (isNaN(minutes) || minutes <= 0) {
+          console.log("   ⚠️ Invalid input. Please enter a positive number or press Enter for default (15 min)");
+          continue;
+        }
+      }
+      
+      // Calculate offline until timestamp (RFC3339 format)
+      is_offline_until = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+      console.log(`   ⏰ Will be offline until: ${is_offline_until} (${minutes} minutes from now)`);
+      validDuration = true;
+    }
+  }
+
+  try {
+    console.log(`\n🔄 Updating status to ${status}...`);
+    
+    const body = { status };
+    if (reason) body.reason = reason;
+    if (is_offline_until) body.is_offline_until = is_offline_until;
+    
+    const response = await fetch(`${STORE_API}/${storeId}/status`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      console.log("✅ Store status updated successfully!");
+      if (result.status) console.log(`   Status: ${result.status}`);
+      if (result.reason) console.log(`   Reason: ${result.reason}`);
+      if (result.is_offline_until) console.log(`   Offline Until: ${result.is_offline_until}`);
+    } else {
+      console.error("❌ Failed to update status:", result.error || "Unknown error");
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+async function getStoreStatusFlow() {
+  const stores = await fetchAndDisplayStores();
+  
+  const input = await question("\nEnter Store ID (or number from list): ");
+  if (!input.trim()) {
+    await mainMenu();
+    return;
+  }
+  
+  const storeIndex = parseInt(input.trim()) - 1;
+  let storeId;
+
+  if (!isNaN(storeIndex) && storeIndex >= 0 && storeIndex < stores.length) {
+    storeId = stores[storeIndex].id;
+  } else {
+    storeId = input.trim();
+  }
+
+  try {
+    console.log(`\n📥 Fetching store status: ${storeId}`);
+    const response = await fetch(`${STORE_API}/${storeId}/status`);
+    const result = await response.json();
+
+    if (response.ok) {
+      console.log("\n✅ Store Status:");
+      console.log(`   Status: ${result.status}`);
+      if (result.offline_reason) console.log(`   Offline Reason: ${result.offline_reason}`);
+      if (result.is_offline_until) console.log(`   Offline Until: ${result.is_offline_until}`);
+      if (result.next_open_time) console.log(`   Next Open Time: ${result.next_open_time}`);
+      if (result.next_close_time) console.log(`   Next Close Time: ${result.next_close_time}`);
+    } else {
+      console.error("❌ Failed to get store status:", result.error || "Unknown error");
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+async function updateStoreInfoFlow() {
+  const stores = await fetchAndDisplayStores();
+  
+  const input = await question("\nEnter Store ID (or number from list): ");
+  if (!input.trim()) {
+    await mainMenu();
+    return;
+  }
+  
+  const storeIndex = parseInt(input.trim()) - 1;
+  let storeId;
+
+  if (!isNaN(storeIndex) && storeIndex >= 0 && storeIndex < stores.length) {
+    storeId = stores[storeIndex].id;
+  } else {
+    storeId = input.trim();
+  }
+
+  console.log("\nUpdate Store Information:");
+  console.log("1. Update Contact Info");
+  console.log("2. Update Location");
+  console.log("3. Update Pickup Instructions");
+  console.log("4. Update All");
+  
+  const choice = await question("Select what to update (1-4): ");
+
+  const updateData = {};
+
+  try {
+    if (choice === "1" || choice === "4") {
+      const email = await question("Enter contact email (or press Enter to skip): ");
+      const name = await question("Enter contact name (or press Enter to skip): ");
+      const phone = await question("Enter contact phone (or press Enter to skip): ");
+      
+      if (email.trim() || name.trim() || phone.trim()) {
+        updateData.contact = {};
+        if (email.trim()) updateData.contact.email = email.trim();
+        if (name.trim()) updateData.contact.name = name.trim();
+        if (phone.trim()) updateData.contact.phone_number = phone.trim();
+      }
+    }
+
+    if (choice === "2" || choice === "4") {
+      const address = await question("Enter street address (or press Enter to skip): ");
+      const city = await question("Enter city (or press Enter to skip): ");
+      const postalCode = await question("Enter postal code (or press Enter to skip): ");
+      const latInput = await question("Enter latitude (optional, press Enter to skip): ");
+      const longInput = await question("Enter longitude (optional, press Enter to skip): ");
+      
+      if (address.trim() || city.trim() || postalCode.trim() || latInput.trim() || longInput.trim()) {
+        updateData.location = {};
+        if (address.trim()) updateData.location.street_address_line_one = address.trim();
+        if (city.trim()) updateData.location.city = city.trim();
+        if (postalCode.trim()) updateData.location.postal_code = postalCode.trim();
+        
+        // Only add coordinates if explicitly provided
+        if (latInput.trim()) {
+          updateData.location.latitude = parseFloat(latInput.trim());
+        }
+        if (longInput.trim()) {
+          updateData.location.longitude = parseFloat(longInput.trim());
+        }
+      }
+    }
+
+    if (choice === "3" || choice === "4") {
+      const instructions = await question("Enter pickup instructions (or press Enter to skip): ");
+      if (instructions.trim()) {
+        updateData.pickup_instructions = instructions.trim();
+      }
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      console.log("   ⚠️ No updates provided");
+    } else {
+      console.log(`\n🔄 Updating store info...`);
+      const response = await fetch(`${STORE_API}/${storeId}/info`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updateData),
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        console.log("✅ Store info updated successfully!");
+      } else {
+        console.error("❌ Failed to update:", result.error || "Unknown error");
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+async function updatePrepTimeFlow() {
+  const stores = await fetchAndDisplayStores();
+  
+  const input = await question("\nEnter Store ID (or number from list): ");
+  if (!input.trim()) {
+    await mainMenu();
+    return;
+  }
+  
+  const storeIndex = parseInt(input.trim()) - 1;
+  let storeId;
+
+  if (!isNaN(storeIndex) && storeIndex >= 0 && storeIndex < stores.length) {
+    storeId = stores[storeIndex].id;
+  } else {
+    storeId = input.trim();
+  }
+
+  const prepTimeInput = await question("Enter new preparation time in minutes (e.g., 15, max 180): ");
+  
+  if (!prepTimeInput.trim()) {
+    console.log("   ⚠️ No time provided");
+    await question("Press Enter to continue...");
+    await mainMenu();
+    return;
+  }
+
+  const prepTime = parseInt(prepTimeInput.trim());
+  
+  if (isNaN(prepTime) || prepTime <= 0 || prepTime > 180) {
+    console.log("   ⚠️ Invalid time. Please enter a number between 1 and 180 minutes");
+    await question("Press Enter to continue...");
+    await mainMenu();
+    return;
+  }
+
+  try {
+    console.log(`\n🔄 Updating prep time to ${prepTime} minutes (${prepTime * 60} seconds)...`);
+    const response = await fetch(`${STORE_API}/${storeId}/prep-time`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ default_prep_time: prepTime }),
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      console.log("✅ Prep time updated successfully!");
+      if (result.prep_times) {
+        console.log(`   Default prep time: ${result.prep_times.default_value ? Math.round(result.prep_times.default_value / 60) + " min" : "N/A"}`);
+      }
+    } else {
+      console.error("❌ Failed to update:", result.error || "Unknown error");
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+async function updateFulfillmentConfigFlow() {
+  const stores = await fetchAndDisplayStores();
+  
+  const input = await question("\nEnter Store ID (or number from list): ");
+  if (!input.trim()) {
+    await mainMenu();
+    return;
+  }
+  
+  const storeIndex = parseInt(input.trim()) - 1;
+  let storeId;
+
+  if (!isNaN(storeIndex) && storeIndex >= 0 && storeIndex < stores.length) {
+    storeId = stores[storeIndex].id;
+  } else {
+    storeId = input.trim();
+  }
+
+  console.log("\n⚠️ Note: This feature requires the 'eats.byoc.fulfillment.config' scope");
+  console.log("   It is only available for stores configured with BYOC (Bring Your Own Courier)");
+
+  const etdInput = await question("\nEnter custom minimum ETD in minutes (1-160, or press Enter to skip): ");
+  
+  if (!etdInput.trim()) {
+    console.log("   ⚠️ No ETD provided, skipping update");
+    await question("Press Enter to continue...");
+    await mainMenu();
+    return;
+  }
+
+  const etd = parseInt(etdInput.trim());
+  
+  if (isNaN(etd) || etd < 1 || etd > 160) {
+    console.log("   ⚠️ Invalid ETD. Please enter a number between 1 and 160 minutes");
+    await question("Press Enter to continue...");
+    await mainMenu();
+    return;
+  }
+
+  try {
+    console.log(`\n🔄 Updating fulfillment config with custom ETD: ${etd} minutes...`);
+    const response = await fetch(`${STORE_API}/${storeId}/fulfillment-config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ custom_min_etd_minutes: etd }),
+    });
+
+    const result = await response.json();
+
+    if (response.ok) {
+      console.log("✅ Fulfillment config updated successfully!");
+      if (result.override_config) {
+        console.log(`   Custom Min ETD: ${result.override_config.custom_min_etd_minutes || "N/A"} minutes`);
+      }
+    } else {
+      // Provide detailed error messages
+      if (result.code === "unauthorized") {
+        console.error("❌ Authorization Error:");
+        console.error("   Your token does not have the required scope for this operation");
+        console.error("   Required scope: eats.byoc.fulfillment.config");
+        console.error("   Please verify your store is configured for BYOC fulfillment");
+      } else {
+        console.error("❌ Failed to update:", result.error || result.message || "Unknown error");
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
   await question("Press Enter to continue...");
   await mainMenu();
 }

@@ -9,7 +9,7 @@ import {
   getAllOrders,
   getOrderById,
   updateOrderStatus,
-} from "./orderService.js";
+} from "../services/orderService.js";
 import fs from "fs";
 import path from "path";
 

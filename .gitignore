@@ -13,6 +13,7 @@ data/
 *.json
 !package.json
 !.env.example
+!apiDoc/*.json
 
 # Logs
 logs/

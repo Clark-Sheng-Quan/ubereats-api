@@ -6,10 +6,10 @@
 import {
   UBER_CLIENT_ID,
   UBER_CLIENT_SECRET,
-} from "./config.js";
+} from "../config/config.js";
 
 const OAUTH_TOKEN_URL = "https://sandbox-login.uber.com/oauth/v2/token";
-const TOKEN_SCOPE = "eats.order";
+const TOKEN_SCOPE = "eats.order eats.store eats.store.status.write";
 const TOKEN_BUFFER_SECONDS = 300; // Refresh 5 minutes before expiration
 
 // In-memory token cache
@@ -28,7 +28,7 @@ export async function getAccessToken() {
     cachedToken.accessToken &&
     cachedToken.expiresAt > Date.now() + TOKEN_BUFFER_SECONDS * 1000
   ) {
-    console.log("✅ Using cached token");
+    // console.log("✅ Using cached token");
     return cachedToken.accessToken;
   }
 

@@ -1,10 +1,17 @@
 import express from "express";
 import bodyParser from "body-parser";
 import crypto from "crypto";
-import { handleWebhookEvent } from "./orderService.js";
-import localRoutes from "./localRoutes.js";
-import uberRoutes from "./uberRoutes.js";
-import { PRIMARY_KEY, SECONDARY_KEY } from "./config.js";
+
+// Polyfill for Object.hasOwn (Node.js < 16.9.0)
+if (!Object.hasOwn) {
+  Object.hasOwn = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
+}
+
+import { handleWebhookEvent } from "./services/orderService.js";
+import localRoutes from "./routes/localRoutes.js";
+import uberRoutes from "./routes/uberRoutes.js";
+import storeRoutes from "./routes/storeRoutes.js";
+import { PRIMARY_KEY, SECONDARY_KEY } from "./config/config.js";
 
 const app = express();
 app.use(bodyParser.json());
@@ -12,6 +19,7 @@ app.use(bodyParser.json());
 // Register route groups
 app.use("/api/local", localRoutes);
 app.use("/api/uber", uberRoutes);
+app.use("/api/store", storeRoutes);
 
 /**
  * Verify Uber webhook signature using HMAC-SHA256

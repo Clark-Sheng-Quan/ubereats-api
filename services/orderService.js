@@ -6,8 +6,8 @@ import {
   UBER_API_VERSION,
   WEBHOOK_EVENTS,
   STORAGE_CONFIG,
-} from "./config.js";
-import { getAccessToken } from "./tokenManager.js";
+} from "../config/config.js";
+import { getAccessToken } from "../utils/tokenManager.js";
 import { acceptOrder } from "./orderActions.js";
 
 const __filename = fileURLToPath(import.meta.url);
