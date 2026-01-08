@@ -16,11 +16,13 @@ const API_BASE_URL = process.env.API_URL || "http://localhost:3000";
 const LOCAL_API = `${API_BASE_URL}/api/local`;
 const UBER_API = `${API_BASE_URL}/api/uber`;
 const STORE_API = `${API_BASE_URL}/api/store`;
+const MENU_API = `${API_BASE_URL}/api/menu`;
 
 console.log(`📡 API Endpoints:`);
 console.log(`   Local API: ${LOCAL_API}`);
 console.log(`   Uber API:  ${UBER_API}`);
-console.log(`   Store API: ${STORE_API}\n`);
+console.log(`   Store API: ${STORE_API}`);
+console.log(`   Menu API:  ${MENU_API}\n`);
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -282,11 +284,15 @@ async function mainMenu() {
   console.log("\n【Store Management】");
   console.log("12. List Stores");
   console.log("13. Get Store Details");
-  console.log("14. Get Store Statu");
+  console.log("14. Get Store Status");
   console.log("15. Update Store Status (Online/Offline)");
   console.log("16. Update Store Info");
   console.log("17. Update Prep Time");
   console.log("18. Update Fulfillment Config");
+  console.log("\n【Menu Management】");
+  console.log("19. Get Menu");
+  console.log("20. Update Item (Price/Suspension)");
+  console.log("21. Upload Menu");
   console.log("\n0. Exit");
   console.log("====================================\n");
 
@@ -346,6 +352,15 @@ async function mainMenu() {
       break;
     case "18":
       await updateFulfillmentConfigFlow();
+      break;
+    case "19":
+      await getMenuFlow();
+      break;
+    case "20":
+      await updateItemFlow();
+      break;
+    case "21":
+      await uploadMenuFlow();
       break;
     case "0":
       console.log("👋 Goodbye!");
@@ -1568,6 +1583,1271 @@ async function updateFulfillmentConfigFlow() {
 
   await question("Press Enter to continue...");
   await mainMenu();
+}
+
+// ========== Menu Management Flows ==========
+
+/**
+ * Get Menu Flow
+ * Retrieves the complete menu for a store with all item details
+ */
+async function getMenuFlow() {
+  const stores = await fetchAndDisplayStores();
+  
+  const input = await question("\nEnter Store ID (or number from list): ");
+  if (!input.trim()) {
+    await mainMenu();
+    return;
+  }
+
+  const storeIndex = parseInt(input.trim()) - 1;
+  let storeId;
+
+  if (!isNaN(storeIndex) && storeIndex >= 0 && storeIndex < stores.length) {
+    storeId = stores[storeIndex].id;
+  } else {
+    storeId = input.trim();
+  }
+
+  const menuType = await question("\nMenu Type (press Enter for DELIVERY, or enter PICK_UP/DINE_IN): ");
+  const finalMenuType = menuType.trim() ? `MENU_TYPE_FULFILLMENT_${menuType.toUpperCase()}` : null;
+
+  try {
+    console.log(`\n🔄 Fetching menu...`);
+    const response = await fetch(`${MENU_API}/${storeId}${finalMenuType ? `?menu_type=${finalMenuType}` : ""}`);
+    
+    if (!response.ok) {
+      const error = await response.text();
+      console.error("❌ Failed to fetch menu:", error);
+    } else {
+      const menu = await response.json();
+      
+      console.log("\n✅ Menu Retrieved:");
+      console.log(`   Menus: ${menu.menus?.length || 0}`);
+      console.log(`   Categories: ${menu.categories?.length || 0}`);
+      console.log(`   Items: ${menu.items?.length || 0}`);
+      console.log(`   Modifier Groups: ${menu.modifier_groups?.length || 0}`);
+      
+      // Display items with details
+      if (menu.items && menu.items.length > 0) {
+        console.log("\n📋 Items List:");
+        console.log("═".repeat(120));
+        menu.items.forEach((item, index) => {
+          const price = item.price_info?.price ? `$${(item.price_info.price / 100).toFixed(2)}` : "N/A";
+          const isSuspended = item.suspension_info?.suspension?.suspend_until ? "🚫" : "✅";
+          const description = item.description?.translations ? Object.values(item.description.translations)[0] : "";
+          console.log(`${String(index + 1).padStart(3, "0")}. [${isSuspended}] ${item.title?.translations?.en_us || item.title || "Unknown"} - ${price}`);
+          if (description) {
+            console.log(`     └─ ${description.substring(0, 80)}${description.length > 80 ? "..." : ""}`);
+          }
+        });
+        console.log("═".repeat(120));
+        
+        // Store menu for Update Item flow
+        global.lastMenuData = { storeId, menu };
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+/**
+ * Update Item Flow
+ * Updates a menu item using item number from Get Menu list
+ * Supports all updateable fields from Uber API
+ */
+async function updateItemFlow() {
+  // Check if we have recent menu data
+  if (!global.lastMenuData || !global.lastMenuData.menu.items) {
+    console.log("⚠️  No menu data available. Please run 'Get Menu' first to load items.");
+    await question("Press Enter to continue...");
+    await mainMenu();
+    return;
+  }
+
+  const { storeId, menu } = global.lastMenuData;
+  const items = menu.items;
+
+  console.log("\n📝 Update Item");
+  console.log(`Store: ${storeId}`);
+  console.log(`Total items: ${items.length}\n`);
+
+  // Show items list again for quick reference
+  items.forEach((item, index) => {
+    const price = item.price_info?.price ? `$${(item.price_info.price / 100).toFixed(2)}` : "N/A";
+    const isSuspended = item.suspension_info?.suspension?.suspend_until ? "🚫" : "✅";
+    console.log(`${String(index + 1).padStart(3, "0")}. [${isSuspended}] ${item.title?.translations?.en_us || item.title} - ${price}`);
+  });
+
+  const itemChoice = await question(`\nEnter item number (1-${items.length}), or ID, or 0 to cancel: `);
+  if (!itemChoice.trim() || itemChoice === "0") {
+    await mainMenu();
+    return;
+  }
+
+  let selectedItem;
+  const itemNum = parseInt(itemChoice.trim());
+
+  if (!isNaN(itemNum) && itemNum > 0 && itemNum <= items.length) {
+    selectedItem = items[itemNum - 1];
+  } else {
+    // Try as ID
+    selectedItem = items.find(i => i.id === itemChoice.trim());
+    if (!selectedItem) {
+      console.error(`❌ Item not found: ${itemChoice}`);
+      await question("Press Enter to continue...");
+      await mainMenu();
+      return;
+    }
+  }
+
+  console.log(`\n✅ Selected: ${selectedItem.title?.translations?.en_us || selectedItem.title}`);
+  console.log(`ID: ${selectedItem.id}\n`);
+
+  // Update type menu
+  console.log("📝 What to update:");
+  console.log("1.  💰 Price Info");
+  console.log("2.  🚫 Suspension/Availability");
+  console.log("3.  📋 Menu Type");
+  console.log("4.  📦 Product Info (GTIN/UPC/PLU)");
+  console.log("5.  🏷️  Classifications (Dietary, Allergies, etc)");
+  console.log("6.  ☕ Beverage Info (Caffeine, Alcohol)");
+  console.log("7.  📦 Physical Properties (Packaging, Storage)");
+  console.log("8.  💊 Medication Info");
+  console.log("9.  🥗 Nutritional Info");
+  console.log("10. 💼 Selling Info");
+  console.log("0.  Cancel");
+
+  const updateChoice = await question("\nSelect option (0-10): ");
+
+  try {
+    const updateData = {};
+
+    switch (updateChoice.trim()) {
+      case "1":
+        await handlePriceInfo(updateData);
+        break;
+      case "2":
+        await handleSuspensionInfo(updateData);
+        break;
+      case "3":
+        await handleMenuType(updateData);
+        break;
+      case "4":
+        await handleProductInfo(updateData);
+        break;
+      case "5":
+        await handleClassifications(updateData);
+        break;
+      case "6":
+        await handleBeverageInfo(updateData);
+        break;
+      case "7":
+        await handlePhysicalProperties(updateData);
+        break;
+      case "8":
+        await handleMedicationInfo(updateData);
+        break;
+      case "9":
+        await handleNutritionalInfo(updateData);
+        break;
+      case "10":
+        await handleSellingInfo(updateData);
+        break;
+      case "0":
+        await mainMenu();
+        return;
+      default:
+        console.log("❌ Invalid option");
+        await question("Press Enter to continue...");
+        await mainMenu();
+        return;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      console.log("❌ No updates provided");
+    } else {
+      console.log(`\n🔄 Updating item...`);
+      const response = await fetch(`${MENU_API}/${storeId}/items/${selectedItem.id}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updateData),
+      });
+
+      if (response.ok || response.status === 204) {
+        console.log("✅ Item updated successfully!");
+      } else {
+        const error = await response.text();
+        console.error("❌ Failed to update item:", error);
+      }
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+/**
+ * Handle Price Info update
+ */
+async function handlePriceInfo(updateData) {
+  console.log("\n💰 Price Info Update:");
+  
+  const priceStr = await question("Price in cents (required, e.g., 1299 for $12.99): ");
+  const price = parseInt(priceStr.trim());
+  
+  if (isNaN(price) || price < 0) {
+    console.error("❌ Invalid price");
+    return;
+  }
+
+  const priceInfo = { price };
+
+  const corePriceStr = await question("Core price in cents (optional, for refunds): ");
+  if (corePriceStr.trim()) {
+    const corePrice = parseInt(corePriceStr.trim());
+    if (!isNaN(corePrice) && corePrice >= price) {
+      priceInfo.core_price = corePrice;
+    }
+  }
+
+  const depositStr = await question("Container deposit in cents (optional): ");
+  if (depositStr.trim()) {
+    const deposit = parseInt(depositStr.trim());
+    if (!isNaN(deposit) && deposit >= 0) {
+      priceInfo.container_deposit = deposit;
+    }
+  }
+
+  updateData.price_info = priceInfo;
+  console.log(`   ✅ Price updated: $${(price/100).toFixed(2)}`);
+}
+
+/**
+ * Handle Suspension Info update
+ */
+async function handleSuspensionInfo(updateData) {
+  console.log("\n🚫 Suspension/Availability:");
+  
+  const choice = await question("Suspend item? (y/n): ");
+  
+  if (choice.toLowerCase() === 'y') {
+    const reason = await question("Reason (e.g., OUT_OF_STOCK): ");
+    updateData.suspension_info = {
+      suspension: {
+        suspend_until: null,
+        reason: reason.trim() || "OUT_OF_STOCK",
+      },
+    };
+    console.log(`   ✅ Item suspended: ${reason.trim() || "OUT_OF_STOCK"}`);
+  } else {
+    updateData.suspension_info = {
+      suspension: {
+        suspend_until: null,
+        reason: null,
+      },
+    };
+    console.log(`   ✅ Item will be available`);
+  }
+}
+
+/**
+ * Handle Menu Type update
+ */
+async function handleMenuType(updateData) {
+  console.log("\n📋 Menu Type:");
+  console.log("1. MENU_TYPE_FULFILLMENT_DELIVERY");
+  console.log("2. MENU_TYPE_FULFILLMENT_PICK_UP");
+  console.log("3. MENU_TYPE_FULFILLMENT_DINE_IN (AU/NZ only)");
+  
+  const choice = await question("Select menu type (1-3): ");
+  
+  const menuTypes = {
+    "1": "MENU_TYPE_FULFILLMENT_DELIVERY",
+    "2": "MENU_TYPE_FULFILLMENT_PICK_UP",
+    "3": "MENU_TYPE_FULFILLMENT_DINE_IN"
+  };
+  
+  if (menuTypes[choice]) {
+    updateData.menu_type = menuTypes[choice];
+    console.log(`   ✅ Menu type: ${menuTypes[choice]}`);
+  }
+}
+
+/**
+ * Handle Product Info update (GTIN/UPC codes, etc)
+ */
+async function handleProductInfo(updateData) {
+  console.log("\n📦 Product Info:");
+  
+  const productInfo = {};
+
+  const gtin = await question("GTIN/UPC/EAN code (optional): ");
+  if (gtin.trim()) productInfo.gtin = gtin.trim();
+
+  const plu = await question("PLU code for fresh produce (optional): ");
+  if (plu.trim()) productInfo.plu = plu.trim();
+
+  const merchantId = await question("Merchant ID (optional): ");
+  if (merchantId.trim()) productInfo.merchant_id = merchantId.trim();
+
+  const targetMarket = await question("Target market - ISO 3166 code or 'ALL'/'EU' (optional): ");
+  if (targetMarket.trim()) productInfo.target_market = targetMarket.trim();
+
+  const productType = await question("Product type (optional): ");
+  if (productType.trim()) productInfo.product_type = productType.trim();
+
+  const traits = await question("Product traits, comma-separated (optional): ");
+  if (traits.trim()) productInfo.product_traits = traits.split(",").map(t => t.trim());
+
+  const origin = await question("Countries of origin, comma-separated (optional): ");
+  if (origin.trim()) productInfo.countries_of_origin = origin.split(",").map(c => c.trim());
+
+  if (Object.keys(productInfo).length > 0) {
+    updateData.product_info = productInfo;
+    console.log(`   ✅ Product info updated`);
+  }
+}
+
+/**
+ * Handle Classifications (dietary, allergies, etc)
+ */
+async function handleClassifications(updateData) {
+  console.log("\n🏷️  Classifications:");
+  
+  const classifications = {};
+
+  const canServe = await question("Can serve alone? (y/n): ");
+  if (canServe.trim()) classifications.can_serve_alone = canServe.toLowerCase() === 'y';
+
+  const alcoholic = await question("Alcoholic items count (0 for non-alcoholic, or number): ");
+  if (alcoholic.trim()) {
+    const count = parseInt(alcoholic.trim());
+    if (!isNaN(count)) classifications.alcoholic_items = count;
+  }
+
+  const dietary = await question("Dietary labels - VEGAN/VEGETARIAN/GLUTEN_FREE, comma-separated (optional): ");
+  if (dietary.trim()) {
+    classifications.dietary_label_info = {
+      labels: dietary.split(",").map(d => d.trim())
+    };
+  }
+
+  const ingredients = await question("Ingredients, comma-separated (max 50, optional): ");
+  if (ingredients.trim()) {
+    classifications.ingredients = ingredients.split(",").map(i => i.trim()).slice(0, 50);
+  }
+
+  const additives = await question("Additives, comma-separated (optional): ");
+  if (additives.trim()) classifications.additives = additives.split(",").map(a => a.trim());
+
+  const instructions = await question("Instructions for use (max 200 chars, optional): ");
+  if (instructions.trim()) classifications.instructions_for_use = instructions.trim().substring(0, 200);
+
+  const prep = await question("Preparation type - PREPACKAGED or empty (optional): ");
+  if (prep.trim()) classifications.preparation_type = prep.trim();
+
+  const highFat = await question("High fat/salt/sugar? (y/n): ");
+  if (highFat.trim()) classifications.is_high_fat_salt_sugar = highFat.toLowerCase() === 'y';
+
+  if (Object.keys(classifications).length > 0) {
+    updateData.classifications = classifications;
+    console.log(`   ✅ Classifications updated`);
+  }
+}
+
+/**
+ * Handle Beverage Info
+ */
+async function handleBeverageInfo(updateData) {
+  console.log("\n☕ Beverage Info:");
+  
+  const beverageInfo = {};
+
+  const caffeine = await question("Caffeine amount in mg (optional): ");
+  if (caffeine.trim()) {
+    const amount = parseInt(caffeine.trim());
+    if (!isNaN(amount)) beverageInfo.caffeine_amount = amount;
+  }
+
+  const alcohol = await question("Alcohol by volume in E2 format (e.g., 1275 for 12.75%, optional): ");
+  if (alcohol.trim()) {
+    const abv = parseInt(alcohol.trim());
+    if (!isNaN(abv)) beverageInfo.alcohol_by_volume = abv;
+  }
+
+  const coffeeOrigin = await question("Coffee bean origins, comma-separated (optional): ");
+  if (coffeeOrigin.trim()) {
+    beverageInfo.coffee_info = {
+      coffee_bean_origin: coffeeOrigin.split(",").map(o => o.trim())
+    };
+  }
+
+  if (Object.keys(beverageInfo).length > 0) {
+    updateData.beverage_info = beverageInfo;
+    console.log(`   ✅ Beverage info updated`);
+  }
+}
+
+/**
+ * Handle Physical Properties
+ */
+async function handlePhysicalProperties(updateData) {
+  console.log("\n📦 Physical Properties:");
+  
+  const physicalProps = {};
+
+  const reusable = await question("Reusable packaging? (y/n): ");
+  if (reusable.trim()) physicalProps.reusable_packaging = reusable.toLowerCase() === 'y';
+
+  const storage = await question("Storage instructions (max 200 chars, optional): ");
+  if (storage.trim()) physicalProps.storage_instructions = storage.trim().substring(0, 200);
+
+  if (Object.keys(physicalProps).length > 0) {
+    updateData.physical_properties_info = physicalProps;
+    console.log(`   ✅ Physical properties updated`);
+  }
+}
+
+/**
+ * Handle Medication Info
+ */
+async function handleMedicationInfo(updateData) {
+  console.log("\n💊 Medication Info:");
+  
+  const medicationInfo = {};
+
+  const prescription = await question("Medical prescription required? (y/n): ");
+  if (prescription.trim()) medicationInfo.medical_prescription_required = prescription.toLowerCase() === 'y';
+
+  if (Object.keys(medicationInfo).length > 0) {
+    updateData.medication_info = medicationInfo;
+    console.log(`   ✅ Medication info updated`);
+  }
+}
+
+/**
+ * Handle Nutritional Info
+ */
+async function handleNutritionalInfo(updateData) {
+  console.log("\n🥗 Nutritional Info:");
+  
+  const nutritionalInfo = {};
+
+  const calories = await question("Calories (per serving, optional): ");
+  if (calories.trim()) {
+    const cal = parseInt(calories.trim());
+    if (!isNaN(cal)) {
+      nutritionalInfo.calories = {
+        energy_interval: { lower: cal }
+      };
+    }
+  }
+
+  const servingSize = await question("Serving size (optional, e.g., '100g'): ");
+  if (servingSize.trim()) nutritionalInfo.serving_size = { measurement_type: "MEASUREMENT_TYPE_WEIGHT" };
+
+  const numServings = await question("Number of servings (optional): ");
+  if (numServings.trim()) {
+    const num = parseInt(numServings.trim());
+    if (!isNaN(num)) nutritionalInfo.number_of_servings = num;
+  }
+
+  const protein = await question("Protein amount (optional): ");
+  if (protein.trim()) nutritionalInfo.protein = { amount: { interval: { lower: parseInt(protein.trim()) || 0 } } };
+
+  const fat = await question("Fat amount (optional): ");
+  if (fat.trim()) nutritionalInfo.fat = { amount: { interval: { lower: parseInt(fat.trim()) || 0 } } };
+
+  const carbs = await question("Carbohydrates amount (optional): ");
+  if (carbs.trim()) nutritionalInfo.carbohydrates = { amount: { interval: { lower: parseInt(carbs.trim()) || 0 } } };
+
+  const sugar = await question("Sugar amount (optional): ");
+  if (sugar.trim()) nutritionalInfo.sugar = { amount: { interval: { lower: parseInt(sugar.trim()) || 0 } } };
+
+  const salt = await question("Salt amount (optional): ");
+  if (salt.trim()) nutritionalInfo.salt = { amount: { interval: { lower: parseInt(salt.trim()) || 0 } } };
+
+  const allergens = await question("Allergens, comma-separated (optional): ");
+  if (allergens.trim()) nutritionalInfo.allergens = allergens.split(",").map(a => a.trim());
+
+  if (Object.keys(nutritionalInfo).length > 0) {
+    updateData.nutritional_info = nutritionalInfo;
+    console.log(`   ✅ Nutritional info updated`);
+  }
+}
+
+/**
+ * Handle Selling Info
+ */
+async function handleSellingInfo(updateData) {
+  console.log("\n💼 Selling Info:");
+  console.log("Selling options configuration (complex structure)");
+  
+  const sellingOptions = [];
+  const addMore = await question("Add selling option? (y/n): ");
+  
+  if (addMore.toLowerCase() === 'y') {
+    const option = {};
+    
+    const measurement = await question("Measurement type (COUNT/WEIGHT/VOLUME/LENGTH, optional): ");
+    if (measurement.trim()) {
+      option.sold_by_unit = {
+        measurement_type: `MEASUREMENT_TYPE_${measurement.toUpperCase()}`
+      };
+    }
+
+    const minQty = await question("Min permitted quantity (optional): ");
+    const maxQty = await question("Max permitted quantity (optional): ");
+    
+    if (minQty.trim() || maxQty.trim()) {
+      option.quantity_constraints = {};
+      if (minQty.trim()) option.quantity_constraints.min_permitted = parseFloat(minQty.trim());
+      if (maxQty.trim()) option.quantity_constraints.max_permitted = parseFloat(maxQty.trim());
+    }
+
+    if (Object.keys(option).length > 0) {
+      sellingOptions.push(option);
+    }
+  }
+
+  if (sellingOptions.length > 0) {
+    updateData.selling_info = { selling_options: sellingOptions };
+    console.log(`   ✅ Selling info updated`);
+  }
+}
+
+
+/**
+ * Upload Menu Flow
+ * Upload/replace complete menu for a store
+ */
+async function uploadMenuFlow() {
+  console.log("\n📤 Upload Complete Menu");
+  console.log("This will upload a complete MenuConfiguration for a store.\n");
+
+  const storeId = await question("Enter Store ID: ");
+  if (!storeId.trim()) {
+    await mainMenu();
+    return;
+  }
+
+  console.log("\n📝 Menu Configuration Options:");
+  console.log("1. Input JSON directly (paste complete MenuConfiguration)");
+  console.log("2. Build menu step-by-step (interactive mode)");
+  console.log("0. Cancel");
+
+  const choice = await question("\nSelect option (0-2): ");
+
+  try {
+    let menuConfig;
+
+    if (choice === "1") {
+      // Direct JSON input
+      console.log("\n📋 Paste your MenuConfiguration JSON (Ctrl+D or empty line to finish):");
+      console.log("Required fields: menus[], categories[], items[], modifier_groups[]");
+      
+      let jsonInput = "";
+      const jsonLines = [];
+      
+      const readJsonLines = () => {
+        return new Promise((resolve) => {
+          const lineReader = require('readline').createInterface({
+            input: process.stdin,
+            output: process.stdout,
+          });
+          
+          lineReader.on('line', (line) => {
+            if (line.trim() === '') {
+              lineReader.close();
+              resolve(jsonLines.join('\n'));
+            } else {
+              jsonLines.push(line);
+            }
+          });
+        });
+      };
+      
+      jsonInput = await readJsonLines();
+      
+      if (!jsonInput.trim()) {
+        console.log("❌ No JSON provided");
+        await question("Press Enter to continue...");
+        await mainMenu();
+        return;
+      }
+
+      try {
+        menuConfig = JSON.parse(jsonInput);
+      } catch (error) {
+        console.error("❌ Invalid JSON:", error.message);
+        await question("Press Enter to continue...");
+        await mainMenu();
+        return;
+      }
+    } else if (choice === "2") {
+      // Interactive mode - build menu step by step
+      menuConfig = await buildMenuInteractive();
+      if (!menuConfig) {
+        await mainMenu();
+        return;
+      }
+    } else if (choice === "0") {
+      await mainMenu();
+      return;
+    } else {
+      console.log("❌ Invalid option");
+      await question("Press Enter to continue...");
+      await mainMenu();
+      return;
+    }
+
+    // Validate MenuConfiguration
+    if (!menuConfig.menus || !Array.isArray(menuConfig.menus) ||
+        !menuConfig.categories || !Array.isArray(menuConfig.categories) ||
+        !menuConfig.items || !Array.isArray(menuConfig.items) ||
+        !menuConfig.modifier_groups || !Array.isArray(menuConfig.modifier_groups)) {
+      console.error("❌ Invalid MenuConfiguration: missing required arrays (menus, categories, items, modifier_groups)");
+      await question("Press Enter to continue...");
+      await mainMenu();
+      return;
+    }
+
+    console.log(`\n🔄 Uploading menu to store ${storeId}...`);
+    console.log(`   Menus: ${menuConfig.menus.length}`);
+    console.log(`   Categories: ${menuConfig.categories.length}`);
+    console.log(`   Items: ${menuConfig.items.length}`);
+    console.log(`   Modifier Groups: ${menuConfig.modifier_groups.length}`);
+
+    const response = await fetch(`${MENU_API}/${storeId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(menuConfig),
+    });
+
+    if (response.ok || response.status === 204) {
+      console.log("✅ Menu uploaded successfully!");
+      // Cache the uploaded menu
+      global.lastMenuData = { storeId, menu: menuConfig };
+    } else {
+      const error = await response.text();
+      console.error("❌ Failed to upload menu:", error);
+    }
+  } catch (error) {
+    console.error("❌ Error:", error.message);
+  }
+
+  await question("Press Enter to continue...");
+  await mainMenu();
+}
+
+/**
+ * Build menu configuration interactively
+ */
+async function buildMenuInteractive() {
+  const config = {
+    menus: [],
+    categories: [],
+    items: [],
+    modifier_groups: []
+  };
+
+  const menuTypeChoice = await question("\nMenu type (1=DELIVERY, 2=PICKUP, 3=DINE_IN, 0=DEFAULT): ");
+  const menuTypeMap = {
+    "1": "MENU_TYPE_FULFILLMENT_DELIVERY",
+    "2": "MENU_TYPE_FULFILLMENT_PICK_UP",
+    "3": "MENU_TYPE_FULFILLMENT_DINE_IN"
+  };
+  if (menuTypeMap[menuTypeChoice]) {
+    config.menu_type = menuTypeMap[menuTypeChoice];
+  }
+
+  // Build Menus
+  console.log("\n🍽️  Configure Menus:");
+  const addMenu = await question("Add a menu? (y/n): ");
+  if (addMenu.toLowerCase() === 'y') {
+    const menu = await buildMenu();
+    if (menu) config.menus.push(menu);
+  }
+
+  // Build Categories
+  console.log("\n📂 Configure Categories:");
+  const addCategory = await question("Add a category? (y/n): ");
+  if (addCategory.toLowerCase() === 'y') {
+    const category = await buildCategory();
+    if (category) config.categories.push(category);
+  }
+
+  // Build Items
+  console.log("\n🍕 Configure Items:");
+  const addItem = await question("Add items? (y/n): ");
+  if (addItem.toLowerCase() === 'y') {
+    let addMore = true;
+    while (addMore) {
+      const item = await buildItem();
+      if (item) {
+        config.items.push(item);
+        addMore = await question("Add another item? (y/n): ");
+        addMore = addMore.toLowerCase() === 'y';
+      } else {
+        addMore = false;
+      }
+    }
+  }
+
+  // Build Modifier Groups
+  console.log("\n⚙️  Configure Modifier Groups:");
+  const addModifier = await question("Add modifier groups? (y/n): ");
+  if (addModifier.toLowerCase() === 'y') {
+    let addMore = true;
+    while (addMore) {
+      const modifierGroup = await buildModifierGroup();
+      if (modifierGroup) {
+        config.modifier_groups.push(modifierGroup);
+        addMore = await question("Add another modifier group? (y/n): ");
+        addMore = addMore.toLowerCase() === 'y';
+      } else {
+        addMore = false;
+      }
+    }
+  }
+
+  return config;
+}
+
+/**
+ * Build a Menu object
+ */
+async function buildMenu() {
+  const id = await question("Menu ID (unique identifier): ");
+  if (!id.trim()) return null;
+
+  const title = await question("Menu title (e.g., 'Breakfast', 'Lunch'): ");
+  if (!title.trim()) return null;
+
+  const subtitle = await question("Menu subtitle (optional): ");
+
+  const menu = {
+    id: id.trim(),
+    title: { translations: { en_us: title.trim() } },
+    category_ids: []
+  };
+
+  if (subtitle.trim()) {
+    menu.subtitle = { translations: { en_us: subtitle.trim() } };
+  }
+
+  // Service Availability
+  console.log("\n⏰ Service Availability:");
+  const addAvailability = await question("Configure service availability? (y/n): ");
+  if (addAvailability.toLowerCase() === 'y') {
+    const availability = await buildServiceAvailability();
+    if (availability) menu.service_availability = availability;
+  }
+
+  // Category IDs
+  const categoryIds = await question("Category IDs (comma-separated): ");
+  if (categoryIds.trim()) {
+    menu.category_ids = categoryIds.split(",").map(id => id.trim());
+  }
+
+  return menu;
+}
+
+/**
+ * Build service availability
+ */
+async function buildServiceAvailability() {
+  const availability = [];
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  
+  for (const day of days) {
+    const hasDay = await question(`Available on ${day}? (y/n): `);
+    if (hasDay.toLowerCase() === 'y') {
+      const startTime = await question(`  Start time (HH:MM, e.g., 08:00): `);
+      const endTime = await question(`  End time (HH:MM, e.g., 23:00): `);
+      
+      if (startTime.match(/^\d{2}:\d{2}$/) && endTime.match(/^\d{2}:\d{2}$/)) {
+        availability.push({
+          day_of_week: day,
+          time_periods: [{ start_time: startTime, end_time: endTime }]
+        });
+      }
+    }
+  }
+
+  return availability.length > 0 ? availability : null;
+}
+
+/**
+ * Build a Category object
+ */
+async function buildCategory() {
+  const id = await question("Category ID (unique identifier): ");
+  if (!id.trim()) return null;
+
+  const title = await question("Category title (e.g., 'Appetizers'): ");
+  if (!title.trim()) return null;
+
+  const subtitle = await question("Category subtitle (optional): ");
+
+  const category = {
+    id: id.trim(),
+    title: { translations: { en_us: title.trim() } },
+    entities: []
+  };
+
+  if (subtitle.trim()) {
+    category.subtitle = { translations: { en_us: subtitle.trim() } };
+  }
+
+  // Add items/modifier groups to this category
+  const itemIds = await question("Item IDs in this category (comma-separated): ");
+  if (itemIds.trim()) {
+    itemIds.split(",").forEach(itemId => {
+      category.entities.push({
+        id: itemId.trim(),
+        type: "ITEM"
+      });
+    });
+  }
+
+  return category;
+}
+
+/**
+ * Build an Item object with all supported parameters
+ */
+async function buildItem() {
+  const id = await question("Item ID (unique identifier, avoid / and ;): ");
+  if (!id.trim()) return null;
+
+  const title = await question("Item title: ");
+  if (!title.trim()) return null;
+
+  const description = await question("Item description (optional): ");
+
+  const item = {
+    id: id.trim(),
+    title: { translations: { en_us: title.trim() } }
+  };
+
+  if (description.trim()) {
+    item.description = { translations: { en_us: description.trim() } };
+  }
+
+  // Price Info (REQUIRED)
+  console.log("\n💰 Price Info:");
+  const priceStr = await question("Price in cents (required): ");
+  const price = parseInt(priceStr.trim());
+  if (!isNaN(price)) {
+    item.price_info = { price };
+
+    const corePriceStr = await question("Core price in cents (optional): ");
+    if (corePriceStr.trim()) {
+      const corePrice = parseInt(corePriceStr.trim());
+      if (!isNaN(corePrice)) item.price_info.core_price = corePrice;
+    }
+
+    const depositStr = await question("Container deposit in cents (optional): ");
+    if (depositStr.trim()) {
+      const deposit = parseInt(depositStr.trim());
+      if (!isNaN(deposit)) item.price_info.container_deposit = deposit;
+    }
+  } else {
+    console.error("❌ Invalid price");
+    return null;
+  }
+
+  // Image URL
+  const imageUrl = await question("Image URL (optional): ");
+  if (imageUrl.trim()) item.image_url = imageUrl.trim();
+
+  // External Data
+  const externalData = await question("External data for POS integration (optional, max 1024 chars): ");
+  if (externalData.trim()) item.external_data = externalData.trim().substring(0, 1024);
+
+  // Tax Info (REQUIRED)
+  console.log("\n🧾 Tax Info:");
+  const taxChoice = await question("Tax type: 1=tax_rate (added on top), 2=vat_rate (included), 0=none: ");
+  if (taxChoice === "1") {
+    const taxRate = await question("Tax rate (0-100): ");
+    const rate = parseFloat(taxRate);
+    if (!isNaN(rate)) item.tax_info = { tax_rate: rate };
+  } else if (taxChoice === "2") {
+    const vatRate = await question("VAT rate (0-100): ");
+    const rate = parseFloat(vatRate);
+    if (!isNaN(rate)) item.tax_info = { vat_rate_percentage: rate };
+  } else {
+    item.tax_info = { tax_rate: 0 };
+  }
+
+  // Suspension Info
+  console.log("\n🚫 Suspension Info (optional):");
+  const suspendChoice = await question("Suspend item? (y/n): ");
+  if (suspendChoice.toLowerCase() === 'y') {
+    const reason = await question("Suspension reason: ");
+    item.suspension_info = {
+      suspension: {
+        suspend_until: null,
+        reason: reason.trim() || "OUT_OF_STOCK"
+      }
+    };
+  }
+
+  // Quantity Info
+  const addQuantity = await question("\n📊 Add quantity constraints? (y/n): ");
+  if (addQuantity.toLowerCase() === 'y') {
+    const quantityInfo = await buildQuantityInfo();
+    if (quantityInfo) item.quantity_info = quantityInfo;
+  }
+
+  // Nutritional Info
+  const addNutritional = await question("\n🥗 Add nutritional info? (y/n): ");
+  if (addNutritional.toLowerCase() === 'y') {
+    item.nutritional_info = await buildNutritionalInfo();
+  }
+
+  // Classifications / Dish Info
+  const addClassifications = await question("\n🏷️  Add classifications? (y/n): ");
+  if (addClassifications.toLowerCase() === 'y') {
+    const classifications = await buildClassifications();
+    if (classifications) {
+      item.dish_info = { classifications };
+    }
+  }
+
+  // Beverage Info
+  const addBeverage = await question("\n☕ Add beverage info? (y/n): ");
+  if (addBeverage.toLowerCase() === 'y') {
+    item.beverage_info = await buildBeverageInfo();
+  }
+
+  // Product Info
+  const addProductInfo = await question("\n📦 Add product info (GTIN/UPC)? (y/n): ");
+  if (addProductInfo.toLowerCase() === 'y') {
+    item.product_info = await buildProductInfo();
+  }
+
+  // Physical Properties
+  const addPhysical = await question("\n📦 Add physical properties? (y/n): ");
+  if (addPhysical.toLowerCase() === 'y') {
+    item.physical_properities_info = await buildPhysicalProperties();
+  }
+
+  // Visibility Info
+  const addVisibility = await question("\n👁️  Add visibility info? (y/n): ");
+  if (addVisibility.toLowerCase() === 'y') {
+    item.visibility_info = await buildVisibilityInfo();
+  }
+
+  // Modifier Groups
+  const modifierIds = await question("\n⚙️  Modifier group IDs (comma-separated, optional): ");
+  if (modifierIds.trim()) {
+    item.modifier_group_ids = {
+      ids: modifierIds.split(",").map(id => id.trim())
+    };
+  }
+
+  return item;
+}
+
+/**
+ * Build Quantity Info
+ */
+async function buildQuantityInfo() {
+  const minQty = await question("Min quantity (optional): ");
+  const maxQty = await question("Max quantity (optional): ");
+  const defaultQty = await question("Default quantity (optional): ");
+
+  const quantityInfo = { quantity: {} };
+  
+  if (minQty.trim()) {
+    const min = parseInt(minQty.trim());
+    if (!isNaN(min)) quantityInfo.quantity.min_permitted = min;
+  }
+  if (maxQty.trim()) {
+    const max = parseInt(maxQty.trim());
+    if (!isNaN(max)) quantityInfo.quantity.max_permitted = max;
+  }
+  if (defaultQty.trim()) {
+    const def = parseInt(defaultQty.trim());
+    if (!isNaN(def)) quantityInfo.quantity.default_quantity = def;
+  }
+
+  return Object.keys(quantityInfo.quantity).length > 0 ? quantityInfo : null;
+}
+
+/**
+ * Build Nutritional Info
+ */
+async function buildNutritionalInfo() {
+  const nutritionalInfo = {};
+
+  const calories = await question("Calories (optional): ");
+  if (calories.trim()) {
+    const cal = parseInt(calories.trim());
+    if (!isNaN(cal)) {
+      nutritionalInfo.calories = { energy_interval: { lower: cal } };
+    }
+  }
+
+  const servingSize = await question("Serving size (optional, e.g., '100g'): ");
+  if (servingSize.trim()) nutritionalInfo.serving_size = { measurement_type: "MEASUREMENT_TYPE_WEIGHT" };
+
+  const numServings = await question("Number of servings (optional): ");
+  if (numServings.trim()) {
+    const num = parseInt(numServings.trim());
+    if (!isNaN(num)) nutritionalInfo.number_of_servings = num;
+  }
+
+  const protein = await question("Protein (g, optional): ");
+  if (protein.trim()) {
+    nutritionalInfo.protein = {
+      amount: { interval: { lower: parseInt(protein.trim()) || 0 } }
+    };
+  }
+
+  const fat = await question("Fat (g, optional): ");
+  if (fat.trim()) {
+    nutritionalInfo.fat = {
+      amount: { interval: { lower: parseInt(fat.trim()) || 0 } }
+    };
+  }
+
+  const carbs = await question("Carbohydrates (g, optional): ");
+  if (carbs.trim()) {
+    nutritionalInfo.carbohydrates = {
+      amount: { interval: { lower: parseInt(carbs.trim()) || 0 } }
+    };
+  }
+
+  const sugar = await question("Sugar (g, optional): ");
+  if (sugar.trim()) {
+    nutritionalInfo.sugar = {
+      amount: { interval: { lower: parseInt(sugar.trim()) || 0 } }
+    };
+  }
+
+  const salt = await question("Salt (g, optional): ");
+  if (salt.trim()) {
+    nutritionalInfo.salt = {
+      amount: { interval: { lower: parseInt(salt.trim()) || 0 } }
+    };
+  }
+
+  const allergens = await question("Allergens (comma-separated, optional): ");
+  if (allergens.trim()) {
+    nutritionalInfo.allergens = allergens.split(",").map(a => a.trim());
+  }
+
+  return Object.keys(nutritionalInfo).length > 0 ? nutritionalInfo : null;
+}
+
+/**
+ * Build Classifications
+ */
+async function buildClassifications() {
+  const classifications = {};
+
+  const canServe = await question("Can serve alone? (y/n): ");
+  if (canServe.trim()) classifications.can_serve_alone = canServe.toLowerCase() === 'y';
+
+  const dietary = await question("Dietary labels (VEGAN/VEGETARIAN/GLUTEN_FREE, comma-separated, optional): ");
+  if (dietary.trim()) {
+    classifications.dietary_label_info = {
+      labels: dietary.split(",").map(d => d.trim())
+    };
+  }
+
+  const ingredients = await question("Ingredients (comma-separated, max 50, optional): ");
+  if (ingredients.trim()) {
+    classifications.ingredients = ingredients.split(",").map(i => i.trim()).slice(0, 50);
+  }
+
+  const additives = await question("Additives (comma-separated, optional): ");
+  if (additives.trim()) {
+    classifications.additives = additives.split(",").map(a => a.trim());
+  }
+
+  const instructions = await question("Instructions for use (max 200 chars, optional): ");
+  if (instructions.trim()) {
+    classifications.instructions_for_use = instructions.trim().substring(0, 200);
+  }
+
+  const prep = await question("Preparation type - PREPACKAGED or empty (optional): ");
+  if (prep.trim()) {
+    classifications.preparation_type = prep.trim();
+  }
+
+  const alcoholic = await question("Alcoholic items count (0 for non-alcoholic, optional): ");
+  if (alcoholic.trim()) {
+    const count = parseInt(alcoholic.trim());
+    if (!isNaN(count)) classifications.alcoholic_items = count;
+  }
+
+  const highFat = await question("High fat/salt/sugar? (y/n): ");
+  if (highFat.trim()) classifications.is_high_fat_salt_sugar = highFat.toLowerCase() === 'y';
+
+  return Object.keys(classifications).length > 0 ? classifications : null;
+}
+
+/**
+ * Build Beverage Info
+ */
+async function buildBeverageInfo() {
+  const beverageInfo = {};
+
+  const caffeine = await question("Caffeine amount (mg, optional): ");
+  if (caffeine.trim()) {
+    const amount = parseInt(caffeine.trim());
+    if (!isNaN(amount)) beverageInfo.caffeine_amount = amount;
+  }
+
+  const alcohol = await question("Alcohol by volume - E2 format (e.g., 1275 for 12.75%, optional): ");
+  if (alcohol.trim()) {
+    const abv = parseInt(alcohol.trim());
+    if (!isNaN(abv)) beverageInfo.alcohol_by_volume = abv;
+  }
+
+  const coffeeOrigin = await question("Coffee bean origins (comma-separated, optional): ");
+  if (coffeeOrigin.trim()) {
+    beverageInfo.coffee_info = {
+      coffee_bean_origin: coffeeOrigin.split(",").map(o => o.trim())
+    };
+  }
+
+  return Object.keys(beverageInfo).length > 0 ? beverageInfo : null;
+}
+
+/**
+ * Build Product Info
+ */
+async function buildProductInfo() {
+  const productInfo = {};
+
+  const gtin = await question("GTIN/UPC code (optional): ");
+  if (gtin.trim()) productInfo.gtin = gtin.trim();
+
+  const plu = await question("PLU code (optional): ");
+  if (plu.trim()) productInfo.plu = plu.trim();
+
+  const merchantId = await question("Merchant ID (optional): ");
+  if (merchantId.trim()) productInfo.merchant_id = merchantId.trim();
+
+  const targetMarket = await question("Target market (ALL/EU or ISO code, optional): ");
+  if (targetMarket.trim()) productInfo.target_market = targetMarket.trim();
+
+  const productType = await question("Product type (optional): ");
+  if (productType.trim()) productInfo.product_type = productType.trim();
+
+  const traits = await question("Product traits (comma-separated, optional): ");
+  if (traits.trim()) productInfo.product_traits = traits.split(",").map(t => t.trim());
+
+  const origin = await question("Countries of origin (comma-separated, optional): ");
+  if (origin.trim()) productInfo.countries_of_origin = origin.split(",").map(c => c.trim());
+
+  return Object.keys(productInfo).length > 0 ? productInfo : null;
+}
+
+/**
+ * Build Physical Properties
+ */
+async function buildPhysicalProperties() {
+  const physicalProps = {};
+
+  const reusable = await question("Reusable packaging? (y/n): ");
+  if (reusable.trim()) physicalProps.reusable_packaging = reusable.toLowerCase() === 'y';
+
+  const storage = await question("Storage instructions (max 200 chars, optional): ");
+  if (storage.trim()) physicalProps.storage_instructions = storage.trim().substring(0, 200);
+
+  return Object.keys(physicalProps).length > 0 ? physicalProps : null;
+}
+
+/**
+ * Build Visibility Info
+ */
+async function buildVisibilityInfo() {
+  const visibilityInfo = { hours: { hours_of_week: [] } };
+
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+  
+  for (const day of days) {
+    const hasDay = await question(`Visible on ${day}? (y/n): `);
+    if (hasDay.toLowerCase() === 'y') {
+      const startTime = await question(`  Start time (HH:MM): `);
+      const endTime = await question(`  End time (HH:MM): `);
+      
+      if (startTime.match(/^\d{2}:\d{2}$/) && endTime.match(/^\d{2}:\d{2}$/)) {
+        visibilityInfo.hours.hours_of_week.push({
+          day_of_week: day,
+          time_periods: [{ start_time: startTime, end_time: endTime }]
+        });
+      }
+    }
+  }
+
+  return visibilityInfo.hours.hours_of_week.length > 0 ? visibilityInfo : null;
+}
+
+/**
+ * Build a Modifier Group object
+ */
+async function buildModifierGroup() {
+  const id = await question("Modifier Group ID (unique identifier): ");
+  if (!id.trim()) return null;
+
+  const title = await question("Modifier Group title (e.g., 'Size', 'Toppings'): ");
+  if (!title.trim()) return null;
+
+  const modifierGroup = {
+    id: id.trim(),
+    title: { translations: { en_us: title.trim() } },
+    modifier_options: []
+  };
+
+  const displayType = await question("Display type (1=expanded, 2=collapsed, default=expanded): ");
+  if (displayType === "2") {
+    modifierGroup.display_type = "collapsed";
+  }
+
+  // Quantity Info
+  const minQty = await question("Min quantity (optional): ");
+  const maxQty = await question("Max quantity (optional): ");
+  
+  if (minQty.trim() || maxQty.trim()) {
+    modifierGroup.quantity_info = {
+      quantity: {}
+    };
+    if (minQty.trim()) {
+      const min = parseInt(minQty.trim());
+      if (!isNaN(min)) modifierGroup.quantity_info.quantity.min_permitted = min;
+    }
+    if (maxQty.trim()) {
+      const max = parseInt(maxQty.trim());
+      if (!isNaN(max)) modifierGroup.quantity_info.quantity.max_permitted = max;
+    }
+  }
+
+  // Modifier Options (Items)
+  const optionIds = await question("Modifier option IDs (comma-separated, these should be item IDs): ");
+  if (optionIds.trim()) {
+    optionIds.split(",").forEach(optionId => {
+      modifierGroup.modifier_options.push({
+        id: optionId.trim(),
+        type: "ITEM"
+      });
+    });
+  }
+
+  return modifierGroup;
 }
 
 // Start the POS terminal

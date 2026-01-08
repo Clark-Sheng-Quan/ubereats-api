@@ -71,6 +71,10 @@ export async function handleWebhookEvent(webhookData) {
         await handleStoreStatusChanged(meta);
         break;
 
+      case "store.menu_refresh_request":
+        await handleMenuRefreshRequest(webhookData);
+        break;
+
       default:
         console.warn(`⚠️ Unknown event type: ${event_type}`);
     }
@@ -494,5 +498,35 @@ export function updateOrderStatus(orderId, status) {
   } catch (error) {
     console.error("Error updating order status:", error.message);
     return false;
+  }
+}
+/**
+ * Handle menu refresh request webhook
+ * Triggered when Uber requests a menu refresh
+ * This is typically used to notify the POS that menu data should be re-synced
+ * @param {Object} webhookData - The webhook payload
+ */
+async function handleMenuRefreshRequest(webhookData) {
+  console.log(`\n📋 MENU REFRESH REQUESTED`);
+  
+  const { store_id, partner_store_id, resource_href } = webhookData;
+  
+  console.log(`   Store ID: ${store_id}`);
+  if (partner_store_id) console.log(`   Partner Store ID: ${partner_store_id}`);
+  console.log(`   Resource: ${resource_href}`);
+  
+  try {
+    // Log the menu refresh request for audit trail
+    logAction(store_id, "menu_refresh_requested", {
+      store_id,
+      partner_store_id,
+      timestamp: new Date().toISOString(),
+    });
+    
+    console.log(`   ✅ Menu refresh request logged`);
+    console.log(`   ACTION: Re-fetch menu from Uber API using GET /v2/eats/stores/{store_id}/menus`);
+    console.log(`   This is typically handled by the POS system automatically`);
+  } catch (error) {
+    console.error(`   ❌ Error handling menu refresh request:`, error.message);
   }
 }

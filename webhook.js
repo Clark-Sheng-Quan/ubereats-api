@@ -11,6 +11,7 @@ import { handleWebhookEvent } from "./services/orderService.js";
 import localRoutes from "./routes/localRoutes.js";
 import uberRoutes from "./routes/uberRoutes.js";
 import storeRoutes from "./routes/storeRoutes.js";
+import menuRoutes from "./routes/menuRoutes.js";
 import { PRIMARY_KEY, SECONDARY_KEY } from "./config/config.js";
 
 const app = express();
@@ -20,6 +21,7 @@ app.use(bodyParser.json());
 app.use("/api/local", localRoutes);
 app.use("/api/uber", uberRoutes);
 app.use("/api/store", storeRoutes);
+app.use("/api/menu", menuRoutes);
 
 /**
  * Verify Uber webhook signature using HMAC-SHA256

@@ -33,6 +33,7 @@ export const WEBHOOK_EVENTS = {
   STORE_DEPROVISIONED: "store.deprovisioned",          // Store access removed
   FULFILLMENT_RESOLVED: "order.fulfillment_issues.resolved",  // Fulfillment issue resolved
   STORE_STATUS_CHANGED: "store.status.changed",        // Store status changed
+  MENU_REFRESH_REQUEST: "store.menu_refresh_request",  // Menu refresh requested
 };
 
 // Database/Storage configuration (optional)
