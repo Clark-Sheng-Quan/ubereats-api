@@ -183,3 +183,137 @@ export function updateOrderStatus(orderId, status) {
     return false;
   }
 }
+
+/**
+ * Save Uber connection details for a shop
+ * @param {Object} connectionData - Connection data
+ */
+export function saveUberConnection(connectionData) {
+  try {
+    const file = path.join(dataDir, "uber_connections.json");
+    let connections = [];
+
+    if (fs.existsSync(file)) {
+      const content = fs.readFileSync(file, "utf8");
+      connections = content ? JSON.parse(content) : [];
+    }
+
+    // Find and update or add new connection
+    const existingIndex = connections.findIndex(
+      (c) => c.shop_id === connectionData.shop_id
+    );
+
+    if (existingIndex >= 0) {
+      connections[existingIndex] = { ...connections[existingIndex], ...connectionData };
+    } else {
+      connections.push(connectionData);
+    }
+
+    fs.writeFileSync(file, JSON.stringify(connections, null, 2), "utf8");
+    console.log(`✅ Uber connection saved for shop ${connectionData.shop_id}`);
+  } catch (error) {
+    console.error("Error saving Uber connection:", error.message);
+  }
+}
+
+/**
+ * Get Uber connection for a shop
+ * @param {string} shopId - Shop ID
+ * @returns {Object|null} Connection data or null
+ */
+export function getUberConnection(shopId) {
+  try {
+    const file = path.join(dataDir, "uber_connections.json");
+    if (fs.existsSync(file)) {
+      const content = fs.readFileSync(file, "utf8");
+      const connections = content ? JSON.parse(content) : [];
+      return connections.find((c) => c.shop_id === shopId) || null;
+    }
+    return null;
+  } catch (error) {
+    console.error("Error reading Uber connection:", error.message);
+    return null;
+  }
+}
+
+/**
+ * Delete Uber connection for a shop
+ * @param {string} shopId - Shop ID
+ */
+export function deleteUberConnection(shopId) {
+  try {
+    const file = path.join(dataDir, "uber_connections.json");
+    if (fs.existsSync(file)) {
+      const content = fs.readFileSync(file, "utf8");
+      let connections = content ? JSON.parse(content) : [];
+      connections = connections.filter((c) => c.shop_id !== shopId);
+      fs.writeFileSync(file, JSON.stringify(connections, null, 2), "utf8");
+      console.log(`✅ Uber connection deleted for shop ${shopId}`);
+    }
+  } catch (error) {
+    console.error("Error deleting Uber connection:", error.message);
+  }
+}
+
+/**
+ * Save menu sync history
+ * @param {Object} syncData - Sync history data
+ */
+export function saveSyncHistory(syncData) {
+  try {
+    const file = path.join(dataDir, "sync_history.json");
+    let history = [];
+
+    if (fs.existsSync(file)) {
+      const content = fs.readFileSync(file, "utf8");
+      history = content ? JSON.parse(content) : [];
+    }
+
+    history.push({
+      id: `sync_${Date.now()}`,
+      ...syncData,
+    });
+
+    // Keep only last 1000 sync records per shop
+    const byShop = {};
+    history.forEach((item) => {
+      if (!byShop[item.shop_id]) {
+        byShop[item.shop_id] = [];
+      }
+      byShop[item.shop_id].push(item);
+    });
+
+    history = [];
+    Object.values(byShop).forEach((items) => {
+      if (items.length > 1000) {
+        items = items.slice(-1000);
+      }
+      history.push(...items);
+    });
+
+    fs.writeFileSync(file, JSON.stringify(history, null, 2), "utf8");
+    console.log(`✅ Sync history saved for shop ${syncData.shop_id}`);
+  } catch (error) {
+    console.error("Error saving sync history:", error.message);
+  }
+}
+
+/**
+ * Get sync history for a shop
+ * @param {string} shopId - Shop ID
+ * @returns {Array} Sync history records
+ */
+export function getSyncHistory(shopId) {
+  try {
+    const file = path.join(dataDir, "sync_history.json");
+    if (fs.existsSync(file)) {
+      const content = fs.readFileSync(file, "utf8");
+      const history = content ? JSON.parse(content) : [];
+      return history.filter((h) => h.shop_id === shopId).reverse();
+    }
+    return [];
+  } catch (error) {
+    console.error("Error reading sync history:", error.message);
+    return [];
+  }
+}
