@@ -1,0 +1,266 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "version": "1.0.0",
+    "title": "Delivery BYOC API",
+    "description": null
+  },
+  "servers": [
+    {
+      "url": "https://api.uber.com"
+    }
+  ],
+  "paths": {
+    "/v1/eats/byoc/restaurants/orders/event/location": {
+      "post": {
+        "summary": "Ingest Courier Live Location",
+        "description": "This endpoint handles the ingestion of live location of the courier for BYOC partners.",
+        "operationId": "ingestCourierLiveLocation",
+        "security": [
+          {
+            "auth": [
+              "eats.byoc.position"
+            ]
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/location"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "success"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/bad_request_error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/unauthorized_error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/forbidden_error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/not_found_error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/internal_server_error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "auth": {
+        "type": "oauth2",
+        "description": "This API uses OAuth 2 with the implicit grant flow. [More info](https://developer.uber.com/docs/eats/guides/authentication)",
+        "flows": {
+          "implicit": {
+            "authorizationUrl": "https://auth.uber.com/oauth/v2/token",
+            "scopes": {
+              "eats.byoc.position": "Indicates a token has permission to ingest the courier's location for BYOC orders."
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "location": {
+        "type": "object",
+        "properties": {
+          "location_request": {
+            "type": "object",
+            "properties": {
+              "order_workflow_uuid": {
+                "type": "string",
+                "description": "A unique identifier for a given order.",
+                "example": "96057115-4fb3-474a-bbeb-dd65b7405a80"
+              },
+              "restaurant_uuid": {
+                "type": "string",
+                "description": "Unique identifier of the store.",
+                "example": "4f6d8de4-bb1d-4cf6-81c3-fe981b184751"
+              },
+              "is_batched_order": {
+                "type": "boolean",
+                "description": "Flat to determine if the order is batched?",
+                "example": false
+              },
+              "location_events": {
+                "type": "array",
+                "description": "Array of `location_event`.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "eta_in_minutes": {
+                      "type": "integer",
+                      "required": false,
+                      "description": "Estimated time of arrival in minutes.",
+                      "example": 5
+                    },
+                    "position_event": {
+                      "$ref": "#/components/schemas/position_event"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "position_event": {
+        "type": "object",
+        "description": "Position event object.",
+        "properties": {
+          "point": {
+            "type": "object",
+            "description": "Point object.",
+            "properties": {
+              "latitude": {
+                "type": "integer",
+                "description": "Industry Standard GPS latitude.",
+                "example": -10.1125
+              },
+              "longitude": {
+                "type": "integer",
+                "description": "Industry Standard GPS longitude.",
+                "example": -73.274
+              }
+            }
+          },
+          "time": {
+            "type": "object",
+            "description": "Time object.",
+            "properties": {
+              "epochMillis": {
+                "type": "integer",
+                "description": "Time in epochMillis.",
+                "example": 1657643612000
+              }
+            }
+          }
+        }
+      },
+      "error": {
+        "type": "object",
+        "description": "bad_request",
+        "properties": {
+          "metadata": {
+            "type": "object",
+            "description": "Error message not standardized. Application code will provide contextual error message"
+          }
+        }
+      },
+      "bad_request_error": {
+        "type": "object",
+        "description": "bad_request",
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "The message body could not be deserialized or is malformed in some way.",
+            "description": "Description details of the error."
+          }
+        }
+      },
+      "unauthorized_error": {
+        "type": "object",
+        "description": "unauthorized",
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "No authentication provided or Invalid OAuth 2.0 credentials provided or The developer does not have the required scope.",
+            "description": "Description details of the error."
+          }
+        }
+      },
+      "forbidden_error": {
+        "type": "object",
+        "description": "forbidden",
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "The user attempts to trigger a notification on an entity they don’t manage.",
+            "description": "Description details of the error."
+          }
+        }
+      },
+      "not_found_error": {
+        "type": "object",
+        "description": "not_found",
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "The specified event trigger could not be found.",
+            "description": "Description details of the error."
+          }
+        }
+      },
+      "internal_server_error": {
+        "type": "object",
+        "description": "internal_server_error",
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "An internal error has occurred. Please contact support if this persists.",
+            "description": "Description details of the error."
+          }
+        }
+      }
+    }
+  }
+}

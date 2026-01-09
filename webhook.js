@@ -1,85 +1,26 @@
 import express from "express";
 import bodyParser from "body-parser";
-import crypto from "crypto";
 
 // Polyfill for Object.hasOwn (Node.js < 16.9.0)
 if (!Object.hasOwn) {
   Object.hasOwn = (obj, prop) => Object.prototype.hasOwnProperty.call(obj, prop);
 }
 
-import { handleWebhookEvent } from "./services/orderService.js";
 import localRoutes from "./routes/localRoutes.js";
-import uberRoutes from "./routes/uberRoutes.js";
+import orderRoutes from "./routes/orderRoutes.js";
 import storeRoutes from "./routes/storeRoutes.js";
 import menuRoutes from "./routes/menuRoutes.js";
-import { PRIMARY_KEY, SECONDARY_KEY } from "./config/config.js";
+import webhookRoutes from "./routes/webhookRoutes.js";
 
 const app = express();
 app.use(bodyParser.json());
 
 // Register route groups
 app.use("/api/local", localRoutes);
-app.use("/api/uber", uberRoutes);
+app.use("/api/order", orderRoutes);
 app.use("/api/store", storeRoutes);
 app.use("/api/menu", menuRoutes);
-
-/**
- * Verify Uber webhook signature using HMAC-SHA256
- * @param {string} signature - The signature from x-uber-signature header
- * @param {string} body - The raw request body as string
- * @param {string} signingKey - The signing key to verify against
- * @returns {boolean} True if signature is valid
- */
-function verifyWebhookSignature(signature, body, signingKey) {
-  try {
-    const computed = crypto
-      .createHmac("sha256", signingKey)
-      .update(body)
-      .digest("hex");
-
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(computed));
-  } catch (error) {
-    console.error("Error verifying signature:", error.message);
-    return false;
-  }
-}
-
-app.post("/ubereats/webhook", (req, res) => {
-  const signature = req.headers["x-uber-signature"];
-  const rawBody = JSON.stringify(req.body);
-
-
-  // Try to verify with primary key first, then secondary key
-  const isValidPrimary = verifyWebhookSignature(signature, rawBody, PRIMARY_KEY);
-  const isValidSecondary = verifyWebhookSignature(
-    signature,
-    rawBody,
-    SECONDARY_KEY
-  );
-
-  if (!isValidPrimary && !isValidSecondary) {
-    console.log("❌ Invalid webhook signature");
-    return res.sendStatus(401);
-  }
-
-
-  (async () => {
-    try {
-      const webhookData = req.body;
-      console.log("✅ Valid webhook received:", webhookData.event_type);
-
-      // Handle the webhook event asynchronously
-      await handleWebhookEvent(webhookData);
-
-      // MUST return 200 or Uber will retry
-      res.sendStatus(200);
-    } catch (error) {
-      console.error("❌ Error processing webhook:", error);
-      // Still return 200 to acknowledge receipt, but log the error
-      res.sendStatus(200);
-    }
-  })();
-});
+app.use("", webhookRoutes);
 
 // Health check endpoint
 app.get("/health", (req, res) => {

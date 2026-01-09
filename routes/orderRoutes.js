@@ -16,7 +16,7 @@ import {
   markOrderReady,
   adjustOrderPrice,
   updateOrderReadyTime,
-} from "../services/orderActions.js";
+} from "../services/orderService.js";
 
 const router = express.Router();
 
