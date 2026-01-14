@@ -33,7 +33,7 @@ function verifyWebhookSignature(signature, body, signingKey) {
 }
 
 /**
- * POST /ubereats/webhook
+ * POST /webhook or /ubereats/webhook
  * Receive webhook events from Uber Eats
  */
 router.post("/webhook", (req, res) => {

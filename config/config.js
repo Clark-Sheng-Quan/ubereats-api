@@ -37,8 +37,20 @@ export const WEBHOOK_EVENTS = {
 };
 
 // Database/Storage configuration (optional)
+// Token configuration
+// TOKEN_LIFETIME_SECONDS: Expected lifetime of the token (used as default fallback)
+// TOKEN_BUFFER_SECONDS: How many seconds before actual expiration to trigger a refresh
+// e.g., if token expires in 24 hours, refresh when 5 minutes (300s) are left
+export const TOKEN_CONFIG = {
+  lifetimeSeconds: 86400, // 24 hours - expected token lifetime from Uber
+  bufferSeconds: 300,     // Refresh 5 minutes before expiration
+};
+
 export const STORAGE_CONFIG = {
   // You can use file-based storage for now, later migrate to database
-  ordersFile: "./data/orders.json",
-  logsFile: "./data/webhook_logs.json",
+  ordersFile: "orders.json",
+  logsFile: "webhook_logs.json",
+  actionsFile: "actions.json",
+  connectionsFile: "uber_connections.json",
+  syncFile: "sync_history.json",
 };

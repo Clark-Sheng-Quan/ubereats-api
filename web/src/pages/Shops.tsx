@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { getUserShops, getShopDetail } from "../services/posApi";
+import axios from "axios";
 import {
   generateUberAuthUrl,
   getUberConnectionStatus,
   disconnectUberAccount,
 } from "../services/uberService";
+import { config } from "../config/api";
 import { AlertCircle, CheckCircle, LogOut, Link as LinkIcon } from "lucide-react";
 
 interface Shop {
@@ -28,7 +29,7 @@ export default function ShopsPage() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState("");
 
-  const posToken = localStorage.getItem("pos_token");
+  const posToken = localStorage.getItem("posToken");
 
   useEffect(() => {
     if (!posToken) {
@@ -41,28 +42,51 @@ export default function ShopsPage() {
 
   const loadShops = async () => {
     if (!posToken) return;
-
+    console.log("Loading shops with POS token:", posToken);
     try {
       setLoading(true);
       setError("");
 
-      const shopsData = await getUserShops(posToken);
+      const response = await axios.post(
+        `${config.POS_API_BASE}/shops`,
+        { token: posToken }
+      );
 
-      // 检查每个店铺的Uber连接状态
-      const shopsWithStatus = await Promise.all(
+      console.log("Shops response:", response.data);
+
+      // 后端返回格式: { status_code, shops: [...], permissions: [...] }
+      const responseData = response.data as any;
+      const shopsData: Shop[] = responseData.shops || [];
+
+      if (shopsData.length === 0) {
+        setShops([]);
+        return;
+      }
+
+      // Check Uber connection status for each shop
+      const shopsWithStatus: ShopWithUber[] = await Promise.all(
         shopsData.map(async (shop: Shop) => {
-          const uberStatus = await getUberConnectionStatus(shop._id, posToken);
-          return {
-            ...shop,
-            uberConnected: uberStatus.connected,
-            uberStoreId: uberStatus.store_id,
-          };
+          try {
+            const uberStatus = await getUberConnectionStatus(shop._id, posToken);
+            return {
+              ...shop,
+              uberConnected: uberStatus.connected,
+              uberStoreId: uberStatus.store_id,
+            };
+          } catch (err) {
+            // If checking Uber status fails, just return shop without status
+            return {
+              ...shop,
+              uberConnected: false,
+            };
+          }
         })
       );
 
       setShops(shopsWithStatus);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load shops");
+    } catch (err: any) {
+      console.error("Load shops error:", err);
+      setError(err.response?.data?.message || err.message || "Failed to load shops");
     } finally {
       setLoading(false);
     }

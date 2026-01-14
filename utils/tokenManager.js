@@ -3,14 +3,22 @@
  * Handles token generation, caching, and automatic refresh
  */
 
+import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import {
   UBER_CLIENT_ID,
   UBER_CLIENT_SECRET,
+  TOKEN_CONFIG,
 } from "../config/config.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const OAUTH_TOKEN_URL = "https://sandbox-login.uber.com/oauth/v2/token";
 const TOKEN_SCOPE = "eats.order eats.store eats.store.status.write";
-const TOKEN_BUFFER_SECONDS = 300; // Refresh 5 minutes before expiration
+const TOKEN_BUFFER_SECONDS = TOKEN_CONFIG.bufferSeconds; // From config
+const TOKEN_FILE = path.join(__dirname, "../data/oauth_token.json");
 
 // In-memory token cache
 let cachedToken = {
@@ -19,20 +27,64 @@ let cachedToken = {
 };
 
 /**
+ * Load token from file on startup
+ */
+function loadTokenFromFile() {
+  try {
+    if (fs.existsSync(TOKEN_FILE)) {
+      const data = fs.readFileSync(TOKEN_FILE, "utf8");
+      const token = JSON.parse(data);
+      
+      // Check if token is still valid (with buffer)
+      if (token.expiresAt > Date.now() + TOKEN_BUFFER_SECONDS * 1000) {
+        cachedToken = token;
+        console.log(`✅ Loaded valid token from cache, expires: ${new Date(cachedToken.expiresAt).toISOString()}`);
+        return true;
+      } else {
+        console.log("⚠️ Cached token expired, will fetch new one");
+        return false;
+      }
+    }
+  } catch (error) {
+    console.error("Error loading token from file:", error.message);
+  }
+  return false;
+}
+
+/**
+ * Save token to file for persistence across restarts
+ */
+function saveTokenToFile() {
+  try {
+    const dir = path.dirname(TOKEN_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(TOKEN_FILE, JSON.stringify(cachedToken, null, 2), "utf8");
+  } catch (error) {
+    console.error("Error saving token to file:", error.message);
+  }
+}
+
+/**
  * Get a valid access token, refreshing if necessary
+ * Loads from file on first call, then uses in-memory cache
  * @returns {Promise<string>} Valid access token
  */
 export async function getAccessToken() {
+  // Load from file on first call (when cachedToken is empty)
+  if (!cachedToken.accessToken && !cachedToken.expiresAt) {
+    loadTokenFromFile();
+  }
+
   // Check if cached token is still valid
   if (
     cachedToken.accessToken &&
     cachedToken.expiresAt > Date.now() + TOKEN_BUFFER_SECONDS * 1000
   ) {
-    // console.log("✅ Using cached token");
     return cachedToken.accessToken;
   }
 
-  console.log("🔄 Fetching new OAuth token...");
   return await fetchNewToken();
 }
 
@@ -65,16 +117,14 @@ async function fetchNewToken() {
 
     const data = await response.json();
 
-    // Cache the token
+    // Cache the token both in memory and in file
     cachedToken = {
       accessToken: data.access_token,
       expiresAt: Date.now() + data.expires_in * 1000,
     };
+    saveTokenToFile();
 
-    console.log(
-      `✅ New token obtained, expires in ${data.expires_in} seconds`
-    );
-    console.log(`   Token valid until: ${new Date(cachedToken.expiresAt).toISOString()}`);
+    console.log(`   ✅ New token obtained, expires: ${new Date(cachedToken.expiresAt).toISOString()}`);
 
     return data.access_token;
   } catch (error) {
@@ -91,6 +141,14 @@ export function invalidateToken() {
     accessToken: null,
     expiresAt: null,
   };
+  // Also delete the file
+  try {
+    if (fs.existsSync(TOKEN_FILE)) {
+      fs.unlinkSync(TOKEN_FILE);
+    }
+  } catch (error) {
+    console.error("Error deleting token file:", error.message);
+  }
   console.log("🗑️ Cached token invalidated");
 }
 

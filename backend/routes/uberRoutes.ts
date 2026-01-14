@@ -11,6 +11,7 @@ import { localService } from "../orderService";
 const router = express.Router();
 
 const UBER_TOKEN_URL = "https://login.uber.com/oauth/v2/token";
+const TOKEN_LIFETIME_SECONDS = 86400; // 24 hours - expected token lifetime
 
 /**
  * OAuth回调处理 - 交换授权码获取token
@@ -70,7 +71,7 @@ router.post("/oauth/callback", async (req, res) => {
       access_token: accessToken,
       refresh_token: refreshToken,
       expires_at: new Date(
-        Date.now() + (tokenResponse.data.expires_in || 3600) * 1000
+        Date.now() + (tokenResponse.data.expires_in || TOKEN_LIFETIME_SECONDS) * 1000
       ).toISOString(),
       connected_at: new Date().toISOString(),
     });
@@ -129,7 +130,7 @@ router.post("/status", async (req, res) => {
         connection.access_token = refreshResponse.data.access_token;
         connection.refresh_token = refreshResponse.data.refresh_token;
         connection.expires_at = new Date(
-          Date.now() + (refreshResponse.data.expires_in || 3600) * 1000
+          Date.now() + (refreshResponse.data.expires_in || TOKEN_LIFETIME_SECONDS) * 1000
         ).toISOString();
 
         await localService.saveUberConnection(connection);

@@ -48,7 +48,6 @@ export function saveOrderToStorage(orderData) {
 
     // Write back to file
     fs.writeFileSync(ordersFile, JSON.stringify(orders, null, 2), "utf8");
-    console.log(`   💾 Order saved to storage`);
   } catch (error) {
     console.error(`   ❌ Error saving order to storage:`, error.message);
   }
@@ -98,7 +97,7 @@ export function logAction(orderId, action, details) {
   console.log(`   [${timestamp}] ${action}`);
 
   try {
-    const logsFile = path.join(dataDir, "actions.json");
+    const logsFile = path.join(dataDir, STORAGE_CONFIG.actionsFile || "actions.json");
     let actions = [];
 
     if (fs.existsSync(logsFile)) {
@@ -190,7 +189,7 @@ export function updateOrderStatus(orderId, status) {
  */
 export function saveUberConnection(connectionData) {
   try {
-    const file = path.join(dataDir, "uber_connections.json");
+    const file = path.join(dataDir, STORAGE_CONFIG.connectionsFile);
     let connections = [];
 
     if (fs.existsSync(file)) {
@@ -223,7 +222,7 @@ export function saveUberConnection(connectionData) {
  */
 export function getUberConnection(shopId) {
   try {
-    const file = path.join(dataDir, "uber_connections.json");
+    const file = path.join(dataDir, STORAGE_CONFIG.connectionsFile);
     if (fs.existsSync(file)) {
       const content = fs.readFileSync(file, "utf8");
       const connections = content ? JSON.parse(content) : [];
@@ -242,7 +241,7 @@ export function getUberConnection(shopId) {
  */
 export function deleteUberConnection(shopId) {
   try {
-    const file = path.join(dataDir, "uber_connections.json");
+    const file = path.join(dataDir, STORAGE_CONFIG.connectionsFile);
     if (fs.existsSync(file)) {
       const content = fs.readFileSync(file, "utf8");
       let connections = content ? JSON.parse(content) : [];
@@ -261,7 +260,7 @@ export function deleteUberConnection(shopId) {
  */
 export function saveSyncHistory(syncData) {
   try {
-    const file = path.join(dataDir, "sync_history.json");
+    const file = path.join(dataDir, STORAGE_CONFIG.syncFile);
     let history = [];
 
     if (fs.existsSync(file)) {
@@ -305,7 +304,7 @@ export function saveSyncHistory(syncData) {
  */
 export function getSyncHistory(shopId) {
   try {
-    const file = path.join(dataDir, "sync_history.json");
+    const file = path.join(dataDir, STORAGE_CONFIG.syncFile);
     if (fs.existsSync(file)) {
       const content = fs.readFileSync(file, "utf8");
       const history = content ? JSON.parse(content) : [];

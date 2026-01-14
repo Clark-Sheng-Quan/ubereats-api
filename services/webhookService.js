@@ -1,3 +1,4 @@
+import { log } from "node:console";
 import {
   UBER_API_BASE_URL,
   UBER_API_VERSION,
@@ -86,9 +87,7 @@ async function handleNewOrder(resourceHref, meta) {
   try {
     // Fetch complete order details from Uber API
     const orderDetails = await fetchOrderDetails(orderId, resourceHref);
-    console.log(`   Order ID: ${orderId}`);
-    console.log(`   Status: ${orderDetails?.status}`);
-    console.log(`   Items: ${orderDetails?.cart?.items?.length || 0}`);
+    console.log(orderDetails);
 
     // Save order to storage
     saveOrderToStorage({
@@ -99,9 +98,6 @@ async function handleNewOrder(resourceHref, meta) {
       received_at: new Date().toISOString(),
       status: "pending",
     });
-
-    // TODO: Push to POS system here
-    console.log(`   📋 Order saved, waiting for POS confirmation`);
 
     // Log action
     logAction(orderId, "order_received", {
@@ -320,7 +316,6 @@ export async function fetchOrderDetails(orderId, resourceHref = null) {
     }
 
     const orderData = await response.json();
-    console.log(`   ✅ Fetched full order details`);
     return orderData;
   } catch (error) {
     console.error(`   ⚠️ Error fetching order details: ${error.message}`);

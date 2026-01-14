@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { loginPOS } from "../services/posApi";
+import axios from "axios";
 import { AlertCircle } from "lucide-react";
+import { config } from "../config/api";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -16,12 +17,24 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const result = await loginPOS(email, password);
-      if (result.success) {
-        navigate("/dashboard");
+      const response = await axios.post(
+        `${config.POS_API_BASE}/login`,
+        { email, password }
+      );
+      
+      const data = response.data as any;
+      console.log("Login response:", data);
+      
+      if (data.token) {
+        localStorage.setItem("posToken", data.token);
+        setTimeout(() => navigate("/shops"), 100);
       } else {
-        setError(result.error || "Login failed");
+        console.log("No token in response");
+        setError(data.message || "Login failed");
       }
+    } catch (err: any) {
+      console.error("Login error:", err);
+      setError(err.response?.data?.message || err.message || "Login failed");
     } finally {
       setLoading(false);
     }

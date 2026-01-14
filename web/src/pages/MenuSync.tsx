@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getShopProducts, getProductCategories } from "../services/posApi";
+import axios from "axios";
 import { syncMenuToUber, getSyncHistory } from "../services/uberService";
 import { CheckCircle, AlertCircle, Upload, ArrowLeft } from "lucide-react";
 
@@ -37,7 +37,7 @@ export default function MenuSyncPage() {
     errors?: string[];
   } | null>(null);
 
-  const posToken = localStorage.getItem("pos_token");
+  const posToken = localStorage.getItem("posToken");
 
   useEffect(() => {
     if (!posToken || !shopId) {
@@ -55,19 +55,28 @@ export default function MenuSyncPage() {
       setLoading(true);
       setError("");
 
-      const [productsData, historyData] = await Promise.all([
-        getShopProducts(posToken, shopId),
+      const [productsResponse, historyData] = await Promise.all([
+        axios.post("http://localhost:3000/api/service/pos/products", {
+          token: posToken,
+          shopId: shopId,
+        }),
         getSyncHistory(shopId, posToken),
       ]);
 
-      setProducts(productsData);
-      setSyncHistory(historyData);
+      if (productsResponse.data.success && Array.isArray(productsResponse.data.data)) {
+        const productsData = productsResponse.data.data;
+        setProducts(productsData);
 
-      // 默认选中所有产品
-      const allIds = new Set(productsData.map((p) => p.product_id));
-      setSelectedProducts(allIds);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load menu data");
+        // Select all products by default
+        const allIds = new Set(productsData.map((p: Product) => p.product_id));
+        setSelectedProducts(allIds);
+      } else {
+        setError("Failed to load products");
+      }
+
+      setSyncHistory(historyData);
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || "Failed to load menu data");
     } finally {
       setLoading(false);
     }

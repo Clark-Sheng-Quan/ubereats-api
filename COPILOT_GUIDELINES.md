@@ -53,10 +53,38 @@
   - 异常消息
 - **不包括**：代码变量名、函数名等（保持已有命名约定）
 
----
-  - 3 个以上文件
-  - 架构重构
-  - 预计 20+ 分钟
-  - 影响多个功能模块
+### 3.1 Console.log 格式规范
+- **规则**：所有 console.log 消息必须在前面标注出处，格式为 `[FileName]`
+- **目的**：便于追踪日志来源，方便调试和问题排查
+- **格式示例**：
+  ```javascript
+  // ✅ 正确做法
+  console.log("[webhookService] Order received: ", orderId);
+  console.log("[tokenManager] Token expired, fetching new one");
+  console.log("[localService] Saving order to storage");
+  
+  // ❌ 错误做法（无出处标注）
+  console.log("Order received: ", orderId);
+  console.log("Token fetching...");
+  ```
+- **适用于**：
+  - 业务逻辑日志（正常操作）
+  - 调试日志
+  - 错误和警告消息
+- **命名规范**：
+  - 使用文件名或模块名：`[webhookService]`、`[tokenManager]`、`[localService]`
+  - 对于路由文件：`[posServiceRoutes]`、`[webhookRoutes]`
+  - 对于工具类：`[tokenManager]`、`[uberService]`
 
----
+### 4. API 地址必须有文档支持
+- **规则**：禁止臆想 API 端点地址，所有 API 调用必须有官方文档或已验证的实现支持
+- **执行方法**：
+  - 使用前先检查 `apiDoc/` 文件夹中的 Swagger/OpenAPI 文档
+  - 不确定的 API 地址必须询问用户或查阅官方文档
+  - 如果 API 文档不存在，必须标注为 TODO 并通知用户
+- **违规例子（禁止）**：
+  - ❌ `https://api.uber.com/v2/eats/v2/stores` （虚构的）
+  - ❌ 自己编造的端点路径
+- **正确做法**：
+  - ✅ 查证实际 Swagger 文档：`/v1/delivery/stores` （正确）
+  - ✅ 标注文档来源：`// From: Uber Eats Marketplace Store API`
