@@ -1,13 +1,8 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-import {
-  generateUberAuthUrl,
-  getUberConnectionStatus,
-  disconnectUberAccount,
-} from "../services/uberService";
 import { config } from "../config/api";
-import { AlertCircle, CheckCircle, LogOut, Link as LinkIcon } from "lucide-react";
+import { AlertCircle, ChevronRight } from "lucide-react";
 
 interface Shop {
   _id: string;
@@ -16,17 +11,10 @@ interface Shop {
   description?: string;
 }
 
-interface ShopWithUber extends Shop {
-  uberConnected?: boolean;
-  uberStoreId?: string;
-}
-
 export default function ShopsPage() {
   const navigate = useNavigate();
-  const [shops, setShops] = useState<ShopWithUber[]>([]);
+  const [shops, setShops] = useState<Shop[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedShop, setSelectedShop] = useState<ShopWithUber | null>(null);
-  const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState("");
 
   const posToken = localStorage.getItem("posToken");
@@ -42,7 +30,7 @@ export default function ShopsPage() {
 
   const loadShops = async () => {
     if (!posToken) return;
-    console.log("Loading shops with POS token:", posToken);
+    console.log("[Shops] Loading shops with POS token");
     try {
       setLoading(true);
       setError("");
@@ -52,75 +40,32 @@ export default function ShopsPage() {
         { token: posToken }
       );
 
-      console.log("Shops response:", response.data);
+      console.log("[Shops] Response:", response.data);
 
-      // 后端返回格式: { status_code, shops: [...], permissions: [...] }
+      // Backend response format: { status_code, shops: [...], permissions: [...] }
       const responseData = response.data as any;
       const shopsData: Shop[] = responseData.shops || [];
 
-      if (shopsData.length === 0) {
-        setShops([]);
-        return;
-      }
-
-      // Check Uber connection status for each shop
-      const shopsWithStatus: ShopWithUber[] = await Promise.all(
-        shopsData.map(async (shop: Shop) => {
-          try {
-            const uberStatus = await getUberConnectionStatus(shop._id, posToken);
-            return {
-              ...shop,
-              uberConnected: uberStatus.connected,
-              uberStoreId: uberStatus.store_id,
-            };
-          } catch (err) {
-            // If checking Uber status fails, just return shop without status
-            return {
-              ...shop,
-              uberConnected: false,
-            };
-          }
-        })
-      );
-
-      setShops(shopsWithStatus);
+      setShops(shopsData);
     } catch (err: any) {
-      console.error("Load shops error:", err);
+      console.error("[Shops] Load error:", err);
       setError(err.response?.data?.message || err.message || "Failed to load shops");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleConnectUber = (shop: ShopWithUber) => {
-    const authUrl = generateUberAuthUrl(shop._id);
-    window.location.href = authUrl;
-  };
-
-  const handleDisconnect = async (shopId: string) => {
-    if (!posToken) return;
-
-    if (!window.confirm("确定要断开Uber连接吗？")) {
-      return;
-    }
-
-    try {
-      setDisconnecting(true);
-      const success = await disconnectUberAccount(shopId, posToken);
-      if (success) {
-        await loadShops();
-      } else {
-        setError("Failed to disconnect Uber account");
-      }
-    } finally {
-      setDisconnecting(false);
-    }
-  };
-
-  const handleSelectShop = (shop: ShopWithUber) => {
-    setSelectedShop(shop);
+  const handleSelectShop = (shop: Shop) => {
+    // Store shop info in localStorage for use in ShopDetail
     localStorage.setItem("selected_shop_id", shop._id);
     localStorage.setItem("selected_shop_name", shop.name);
+    localStorage.setItem("selected_shop_key", shop.shop_key);
+    if (shop.description) {
+      localStorage.setItem("selected_shop_description", shop.description);
+    }
+    
+    // Navigate to shop detail page
+    navigate(`/shop/${shop._id}`);
   };
 
   if (loading) {
@@ -139,7 +84,7 @@ export default function ShopsPage() {
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-black">Manage Shops</h1>
+          <h1 className="text-2xl font-bold text-black">Select a Shop</h1>
           <button
             onClick={() => {
               localStorage.clear();
@@ -152,7 +97,7 @@ export default function ShopsPage() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-4xl mx-auto px-6 py-8">
         {/* Error Alert */}
         {error && (
           <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
@@ -161,111 +106,32 @@ export default function ShopsPage() {
           </div>
         )}
 
-        {/* Shops Grid */}
+        {/* Shops List */}
         {shops.length === 0 ? (
           <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
             <p className="text-gray-600">No shops found</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-3">
             {shops.map((shop) => (
-              <div
+              <button
                 key={shop._id}
-                className={`bg-white rounded-lg border-2 p-6 transition-all cursor-pointer ${
-                  selectedShop?._id === shop._id
-                    ? "border-black"
-                    : "border-gray-200 hover:border-gray-300"
-                }`}
                 onClick={() => handleSelectShop(shop)}
+                className="w-full bg-white rounded-lg border border-gray-200 p-4 hover:border-black hover:shadow-md transition-all flex items-center justify-between group"
               >
-                {/* Shop Header */}
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <h3 className="text-xl font-bold text-black mb-1">
-                      {shop.name}
-                    </h3>
-                    <p className="text-sm text-gray-600">
-                      Code: {shop.shop_key}
-                    </p>
-                  </div>
-                  {shop.uberConnected && (
-                    <div className="bg-green-50 rounded-full p-2">
-                      <CheckCircle className="w-6 h-6 text-green-600" />
-                    </div>
-                  )}
-                </div>
-
-                {shop.description && (
-                  <p className="text-sm text-gray-600 mb-4">
-                    {shop.description}
+                <div className="text-left">
+                  <h3 className="text-lg font-semibold text-black group-hover:text-gray-800">
+                    {shop.name}
+                  </h3>
+                  <p className="text-sm text-gray-600">
+                    Code: {shop.shop_key}
                   </p>
-                )}
-
-                {/* Uber Connection Status */}
-                <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                  {shop.uberConnected ? (
-                    <div>
-                      <div className="flex items-center gap-2 mb-3">
-                        <CheckCircle className="w-4 h-4 text-green-600" />
-                        <span className="text-sm font-semibold text-green-700">
-                          Connected to Uber
-                        </span>
-                      </div>
-                      <p className="text-xs text-gray-600 mb-3">
-                        Store ID: {shop.uberStoreId}
-                      </p>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/menu-sync/${shop._id}`);
-                          }}
-                          className="flex-1 bg-black text-white py-2 rounded font-semibold text-sm hover:bg-gray-900 transition-colors"
-                        >
-                          Sync Menu
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDisconnect(shop._id);
-                          }}
-                          disabled={disconnecting}
-                          className="flex-1 bg-red-50 text-red-700 py-2 rounded font-semibold text-sm hover:bg-red-100 transition-colors disabled:opacity-50"
-                        >
-                          {disconnecting ? "Disconnecting..." : "Disconnect"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-sm text-gray-600 mb-3">
-                        Not connected to Uber yet
-                      </p>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleConnectUber(shop);
-                        }}
-                        className="w-full bg-black text-white py-2 rounded font-semibold text-sm hover:bg-gray-900 transition-colors flex items-center justify-center gap-2"
-                      >
-                        <LinkIcon className="w-4 h-4" />
-                        Connect to Uber
-                      </button>
-                    </div>
+                  {shop.description && (
+                    <p className="text-sm text-gray-500 mt-1">{shop.description}</p>
                   )}
                 </div>
-
-                {/* Quick Actions */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigate(`/shop/${shop._id}`);
-                  }}
-                  className="w-full bg-gray-100 text-black py-2 rounded font-semibold text-sm hover:bg-gray-200 transition-colors"
-                >
-                  View Details
-                </button>
-              </div>
+                <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-black transition-colors" />
+              </button>
             ))}
           </div>
         )}

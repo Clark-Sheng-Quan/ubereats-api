@@ -14,7 +14,7 @@ import readline from "readline";
 // Configure API base URL - use environment variable or default to localhost
 const API_BASE_URL = process.env.API_URL || "http://localhost:3000";
 const LOCAL_API = `${API_BASE_URL}/api/local`;
-const UBER_API = `${API_BASE_URL}/api/uber`;
+const UBER_API = `${API_BASE_URL}/api/order`;
 const STORE_API = `${API_BASE_URL}/api/store`;
 const MENU_API = `${API_BASE_URL}/api/menu`;
 
@@ -506,25 +506,67 @@ async function getOrderDetailsFlow() {
 async function listStoreOrdersFlow() {
   console.log("\n📋 List Store Orders Options:");
   console.log("1. All orders (default)");
-  console.log("2. Filter by state (PENDING/ACCEPTED/etc)");
-  console.log("3. Filter by time range");
+  console.log("2. Filter by state");
+  console.log("3. Filter by status");
+  console.log("4. Filter by time range");
+  console.log("5. Advanced filters (combine multiple)");
   
-  const filterChoice = await question("Select filter option (1-3, default: 1): ");
+  const filterChoice = await question("Select filter option (1-5, default: 1): ");
 
-  let queryParams = "expand=carts";
+  let queryParams = "expand=carts,deliveries,payment";
   
   if (filterChoice === "2") {
-    console.log("\nAvailable states: PENDING, ACCEPTED, DENIED, FINISHED, CANCELED");
-    const state = await question("Enter state: ");
+    console.log("\n📌 Available states:");
+    console.log("   • OFFERED - Order has been offered to the merchant");
+    console.log("   • ACCEPTED - Merchant has accepted the order");
+    console.log("   • HANDED_OFF - Order handed off to delivery partners");
+    console.log("   • SUCCEEDED - Order was successfully delivered");
+    console.log("   • FAILED - Order failed");
+    console.log("   • UNKNOWN - Catch-all for unrecognized states");
+    const state = await question("Enter state(s), comma-separated (e.g., OFFERED,ACCEPTED): ");
     if (state) {
       queryParams += `&state=${state.toUpperCase()}`;
     }
   } else if (filterChoice === "3") {
+    console.log("\n📌 Available statuses:");
+    console.log("   • SCHEDULED - Order is scheduled for a future time");
+    console.log("   • ACTIVE - Order is active");
+    console.log("   • COMPLETED - Order is completed");
+    console.log("   • UNKNOWN - Catch-all for unrecognized statuses");
+    const status = await question("Enter status(es), comma-separated (e.g., ACTIVE,COMPLETED): ");
+    if (status) {
+      queryParams += `&status=${status.toUpperCase()}`;
+    }
+  } else if (filterChoice === "4") {
     const hours = await question("Show orders from last X hours (e.g., 24): ");
     if (hours && !isNaN(hours)) {
       const endTime = new Date().toISOString();
       const startTime = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
       queryParams += `&start_time=${startTime}&end_time=${endTime}`;
+    }
+  } else if (filterChoice === "5") {
+    console.log("\n🔍 Advanced Filtering:");
+    
+    const state = await question("State(s) (OFFERED/ACCEPTED/HANDED_OFF/SUCCEEDED/FAILED, optional): ");
+    if (state) {
+      queryParams += `&state=${state.toUpperCase()}`;
+    }
+    
+    const status = await question("Status(es) (SCHEDULED/ACTIVE/COMPLETED, optional): ");
+    if (status) {
+      queryParams += `&status=${status.toUpperCase()}`;
+    }
+    
+    const hours = await question("Show orders from last X hours (optional): ");
+    if (hours && !isNaN(hours)) {
+      const endTime = new Date().toISOString();
+      const startTime = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+      queryParams += `&start_time=${startTime}&end_time=${endTime}`;
+    }
+    
+    const pageSize = await question("Page size (max 50, default 50): ");
+    if (pageSize && !isNaN(pageSize) && parseInt(pageSize) <= 50) {
+      queryParams += `&page_size=${pageSize}`;
     }
   }
 

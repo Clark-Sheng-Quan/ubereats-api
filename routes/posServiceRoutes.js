@@ -20,7 +20,7 @@ router.post("/login", async (req, res) => {
                 message: "Email and password are required",
             });
         }
-        const response = await axios.post(`${POS_API_BASE}/auth/login`, {
+        const response = await axios.post(`${POS_API_BASE}/admin/terminal_login`, {
             email,
             password,
         });
@@ -47,12 +47,12 @@ router.post("/shops", async (req, res) => {
                 message: "Token is required",
             });
         }
-        console.log("Received token:", token);
+        // console.log("Received token:", token);
         console.log("Requesting POS API: /shop/list_shop");
         const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
             token,
         });
-        console.log("POS API response:", response.data);
+        // console.log("POS API response:", response.data);
         res.json(response.data);
     }
     catch (error) {
@@ -65,32 +65,51 @@ router.post("/shops", async (req, res) => {
     }
 });
 /**
- * POST /api/service/pos/shop/:shopId - Get shop details
+ * POST /api/service/pos/shop/:shopId - Get shop details from shops list
  * Body: { token }
+ * Note: POS API doesn't have a dedicated get_shop endpoint,
+ * so we fetch the full shops list and filter by ID
  */
 router.post("/shop/:shopId", async (req, res) => {
-    try {
-        const { shopId } = req.params;
-        const { token } = req.body;
-        if (!token || !shopId) {
-            return res.status(400).json({
-                status_code: 400,
-                message: "Token and shop ID are required",
-            });
-        }
-        const response = await axios.post(`${POS_API_BASE}/shop/get_shop`, {
-            token,
-            shop_id: shopId,
-        });
-        res.json(response.data);
+  try {
+    const { shopId } = req.params;
+    const { token } = req.body;
+
+    if (!token || !shopId) {
+      return res.status(400).json({
+        status_code: 400,
+        message: "Token and shop ID are required",
+      });
     }
-    catch (error) {
-        console.error("Get shop detail error:", error.message);
-        res.status(error.response?.status || 500).json({
-            status_code: error.response?.status || 500,
-            message: error.response?.data?.message || "Failed to fetch shop details",
-        });
+
+    console.log("[posServiceRoutes] Getting shop details for:", shopId);
+
+    // Call list_shop to get all shops and filter for the requested one
+    const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
+      token,
+    });
+
+    console.log("[posServiceRoutes] Got shops list, filtering for ID:", shopId);
+
+    const allShops = response.data.shops || [];
+    const shop = allShops.find((s) => s._id === shopId);
+
+    if (!shop) {
+      return res.status(404).json({
+        status_code: 404,
+        message: `Shop with ID ${shopId} not found`,
+      });
     }
+
+    // Return just the shop object (not the full list response)
+    res.json(shop);
+  } catch (error) {
+    console.error("[posServiceRoutes] Get shop detail error:", error.message);
+    res.status(error.response?.status || 500).json({
+      status_code: error.response?.status || 500,
+      message: error.response?.data?.message || "Failed to fetch shop details",
+    });
+  }
 });
 /**
  * POST /api/service/pos/products - Get shop products

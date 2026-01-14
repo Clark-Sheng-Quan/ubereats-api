@@ -4,6 +4,7 @@ import LoginPage from "./pages/Login";
 import ShopsPage from "./pages/Shops";
 import ShopDetailPage from "./pages/ShopDetail";
 import MenuSyncPage from "./pages/MenuSync";
+import UberOAuthCallbackPage from "./pages/UberOAuthCallback";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem("posToken");
@@ -20,6 +21,8 @@ function App() {
     <Router>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
+
+        <Route path="/auth/uber/callback" element={<UberOAuthCallbackPage />} />
 
         <Route
           path="/shops"

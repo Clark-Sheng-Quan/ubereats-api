@@ -12,6 +12,7 @@ import storeRoutes from "./routes/storeRoutes.js";
 import menuRoutes from "./routes/menuRoutes.js";
 import webhookRoutes from "./routes/webhookRoutes.js";
 import posServiceRoutes from "./routes/posServiceRoutes.js";
+import uberRoutes from "./routes/uberRoutes.js";
 
 const app = express();
 app.use(bodyParser.json());
@@ -35,6 +36,7 @@ app.use("/api/order", orderRoutes);
 app.use("/api/store", storeRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/service/pos", posServiceRoutes);
+app.use("/api/uber", uberRoutes);
 app.use("/ubereats", webhookRoutes);  // Uber webhooks at /ubereats/webhook
 
 // Health check endpoint
