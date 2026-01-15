@@ -1,7 +1,6 @@
 import { log } from "node:console";
 import {
   UBER_API_BASE_URL,
-  UBER_API_VERSION,
   WEBHOOK_EVENTS,
 } from "../config/config.js";
 import { getAccessToken } from "../utils/tokenManager.js";
@@ -288,7 +287,7 @@ export async function fetchOrderDetails(orderId, resourceHref = null) {
       console.log(`   📍 Using webhook resource_href: ${url}`);
     } else {
       // Fallback to constructing the URL
-      url = `${UBER_API_BASE_URL}/${UBER_API_VERSION}/eats/orders/${orderId}`;
+      url = `${UBER_API_BASE_URL}/v2/eats/orders/${orderId}`;
     }
 
     const response = await fetch(url, {

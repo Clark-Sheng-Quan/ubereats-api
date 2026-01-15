@@ -45,6 +45,5 @@ app.get("/health", (req, res) => {
 });
 
 app.listen(3000, () => {
-  console.log("🚀 Uber Eats Webhook server running on port 3000");
   console.log("Listening for webhooks at: http://localhost:3000/ubereats/webhook");
 });

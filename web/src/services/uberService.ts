@@ -8,6 +8,42 @@ const backendApi = axios.create({
   },
 });
 
+// Type definitions for API responses
+interface OAuthCallbackResponse {
+  success: boolean;
+  uber_store_id?: string;
+  message: string;
+}
+
+interface DisconnectResponse {
+  success: boolean;
+  message: string;
+}
+
+interface StatusResponse {
+  connected: boolean;
+  uber_store_id?: string;
+  uber_store_name?: string;
+  connected_at?: string;
+}
+
+interface SyncMenuResponse {
+  success: boolean;
+  synced_count: number;
+  errors: string[];
+  message: string;
+}
+
+interface WebhookVerifyResponse {
+  verified: boolean;
+  webhook_url: string;
+  status: string;
+}
+
+interface SyncHistoryResponse {
+  history: unknown[];
+}
+
 /**
  * 生成Uber OAuth授权URL
  */
@@ -32,7 +68,7 @@ export async function handleUberOAuthCallback(
   posToken: string
 ) {
   try {
-    const response = await backendApi.post("/uber/oauth/callback", {
+    const response = await backendApi.post<OAuthCallbackResponse>("/uber/oauth/callback", {
       code,
       shop_id: shopId,
       pos_token: posToken,
@@ -63,7 +99,7 @@ export async function handleUberOAuthCallback(
  */
 export async function disconnectUberAccount(shopId: string, posToken: string) {
   try {
-    const response = await backendApi.post("/uber/disconnect", {
+    const response = await backendApi.post<DisconnectResponse>("/uber/disconnect", {
       shop_id: shopId,
       pos_token: posToken,
     });
@@ -83,7 +119,7 @@ export async function getUberConnectionStatus(
   posToken: string
 ) {
   try {
-    const response = await backendApi.post("/uber/status", {
+    const response = await backendApi.post<StatusResponse>("/uber/status", {
       shop_id: shopId,
       pos_token: posToken,
     });
@@ -114,7 +150,7 @@ export async function syncMenuToUber(
   }>
 ) {
   try {
-    const response = await backendApi.post("/uber/sync-menu", {
+    const response = await backendApi.post<SyncMenuResponse>("/uber/sync-menu", {
       shop_id: shopId,
       pos_token: posToken,
       products,
@@ -143,7 +179,7 @@ export async function verifyWebhookConfig(
   posToken: string
 ) {
   try {
-    const response = await backendApi.post("/uber/webhook/verify", {
+    const response = await backendApi.post<WebhookVerifyResponse>("/uber/webhook/verify", {
       shop_id: shopId,
       pos_token: posToken,
     });
@@ -166,7 +202,7 @@ export async function verifyWebhookConfig(
  */
 export async function getSyncHistory(shopId: string, posToken: string) {
   try {
-    const response = await backendApi.post("/uber/sync-history", {
+    const response = await backendApi.post<SyncHistoryResponse>("/uber/sync-history", {
       shop_id: shopId,
       pos_token: posToken,
     });

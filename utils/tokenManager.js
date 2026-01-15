@@ -7,15 +7,14 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import {
-  UBER_CLIENT_ID,
-  UBER_CLIENT_SECRET,
+  UBER_CONFIG,
   TOKEN_CONFIG,
 } from "../config/config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const OAUTH_TOKEN_URL = "https://sandbox-login.uber.com/oauth/v2/token";
+const OAUTH_TOKEN_URL = UBER_CONFIG.TOKEN_URL;
 const TOKEN_SCOPE = "eats.order eats.store eats.store.status.write";
 const TOKEN_BUFFER_SECONDS = TOKEN_CONFIG.bufferSeconds; // From config
 const TOKEN_FILE = path.join(__dirname, "../data/oauth_token.json");
@@ -95,8 +94,8 @@ export async function getAccessToken() {
 async function fetchNewToken() {
   try {
     const formData = new URLSearchParams();
-    formData.append("client_id", UBER_CLIENT_ID);
-    formData.append("client_secret", UBER_CLIENT_SECRET);
+    formData.append("client_id", UBER_CONFIG.CLIENT_ID);
+    formData.append("client_secret", UBER_CONFIG.CLIENT_SECRET);
     formData.append("grant_type", "client_credentials");
     formData.append("scope", TOKEN_SCOPE);
 

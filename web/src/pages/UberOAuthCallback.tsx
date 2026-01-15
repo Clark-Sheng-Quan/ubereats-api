@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { handleUberOAuthCallback } from "../services/uberService";
 
@@ -19,8 +19,13 @@ export default function UberOAuthCallbackPage() {
   const [searchParams] = useSearchParams();
   const [status, setStatus] = useState<"loading" | "success" | "error">("loading");
   const [message, setMessage] = useState("");
+  const hasRunEffect = useRef(false);  // Persist across React StrictMode remounts
 
   useEffect(() => {
+    // Prevent double execution in React StrictMode
+    if (hasRunEffect.current) return;
+    hasRunEffect.current = true;
+    
     handleCallback();
   }, []);
 

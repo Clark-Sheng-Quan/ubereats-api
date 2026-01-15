@@ -6,18 +6,27 @@ export const SECONDARY_KEY = "UE_TEST_KEY_b81Qp55zX9";
 // Uber always uses username "uber" for webhook authentication
 export const USERNAME = "uber";
 
-// Uber API Configuration
-// For Sandbox/Test environment
+// OAuth Configuration
+export const UBER_CONFIG = {
+  // OAuth授权端点 - 用户登陆地址
+  OAUTH_URL: "https://sandbox-login.uber.com/oauth/v2/authorize",
+  // OAuth令牌端点 - 后端交换token的地址
+  TOKEN_URL: "https://sandbox-login.uber.com/oauth/v2/token",
+  // OAuth重定向地址
+  REDIRECT_URI: "http://localhost:5174/auth/uber/callback",
+  // OAuth客户端凭证
+  CLIENT_ID: "Y09XkWICeoPp_4LX6QDZIgVkHk1LK_G8",
+  CLIENT_SECRET: "HEfOndSQ0cAW-BIl8lAQ1cb80U2eCxBM_t1nzrMN",
+  // Token配置
+  TOKEN_LIFETIME_SECONDS: 86400, // 24 hours
+  TOKEN_BUFFER_SECONDS: 300,     // 5 minutes before expiration
+};
+
+// Uber API Configuration - Test/Sandbox environment
 export const UBER_API_BASE_URL = "https://test-api.uber.com";
-export const UBER_API_VERSION = "v2";
 
 // Your store ID - Replace with your actual store ID
 export const STORE_ID = "f9b63b20-ad76-46bc-93bb-76c9e86e9e22";
-
-// OAuth Client Credentials - For automatic token generation
-// Get these from your Uber Developer Dashboard
-export const UBER_CLIENT_ID = process.env.UBER_CLIENT_ID || "Y09XkWICeoPp_4LX6QDZIgVkHk1LK_G8";
-export const UBER_CLIENT_SECRET = process.env.UBER_CLIENT_SECRET || "HEfOndSQ0cAW-BIl8lAQ1cb80U2eCxBM_t1nzrMN";
 
 // Webhook configuration
 export const WEBHOOK_ENDPOINT = "http://localhost:3000/ubereats/webhook";
@@ -42,8 +51,8 @@ export const WEBHOOK_EVENTS = {
 // TOKEN_BUFFER_SECONDS: How many seconds before actual expiration to trigger a refresh
 // e.g., if token expires in 24 hours, refresh when 5 minutes (300s) are left
 export const TOKEN_CONFIG = {
-  lifetimeSeconds: 86400, // 24 hours - expected token lifetime from Uber
-  bufferSeconds: 300,     // Refresh 5 minutes before expiration
+  lifetimeSeconds: UBER_CONFIG.TOKEN_LIFETIME_SECONDS,
+  bufferSeconds: UBER_CONFIG.TOKEN_BUFFER_SECONDS,
 };
 
 export const STORAGE_CONFIG = {

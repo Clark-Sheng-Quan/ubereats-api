@@ -99,9 +99,12 @@ export default function ShopDetailPage() {
     }
   };
 
+  const [connecting, setConnecting] = useState(false);
+
   const handleConnectUber = () => {
-    if (!shop) return;
+    if (!shop || connecting) return;
     console.log("[ShopDetail] Connecting to Uber for shop:", shop._id);
+    setConnecting(true);
     const authUrl = generateUberAuthUrl(shop._id);
     window.location.href = authUrl;
   };
@@ -286,9 +289,10 @@ export default function ShopDetailPage() {
             </div>
             <button
               onClick={handleConnectUber}
-              className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors"
+              disabled={connecting}
+              className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
             >
-              Authorize Uber Eats Merchant Account
+              {connecting ? "Redirecting..." : "Authorize Uber Eats Merchant Account"}
             </button>
           </div>
 

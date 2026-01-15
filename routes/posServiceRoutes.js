@@ -48,7 +48,6 @@ router.post("/shops", async (req, res) => {
             });
         }
         // console.log("Received token:", token);
-        console.log("Requesting POS API: /shop/list_shop");
         const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
             token,
         });
