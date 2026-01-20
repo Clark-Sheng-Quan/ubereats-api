@@ -209,7 +209,6 @@ export function saveUberConnection(connectionData) {
     }
 
     fs.writeFileSync(file, JSON.stringify(connections, null, 2), "utf8");
-    console.log(`✅ Uber connection saved for shop ${connectionData.shop_id}`);
   } catch (error) {
     console.error("Error saving Uber connection:", error.message);
   }
@@ -247,7 +246,6 @@ export function deleteUberConnection(shopId) {
       let connections = content ? JSON.parse(content) : [];
       connections = connections.filter((c) => c.shop_id !== shopId);
       fs.writeFileSync(file, JSON.stringify(connections, null, 2), "utf8");
-      console.log(`✅ Uber connection deleted for shop ${shopId}`);
     }
   } catch (error) {
     console.error("Error deleting Uber connection:", error.message);

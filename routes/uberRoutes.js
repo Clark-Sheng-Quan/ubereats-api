@@ -13,6 +13,15 @@ import {
   saveSyncHistory, 
   getSyncHistory 
 } from "../services/localService.js";
+import {
+  saveShopBinding,
+  getShopBinding,
+  deleteShopBinding,
+} from "../services/bindingService.js";
+import {
+  activateIntegration,
+  removeIntegrationConfiguration,
+} from "../services/integrationService.js";
 import { UBER_CONFIG, UBER_API_BASE_URL } from "../config/config.js";
 
 const router = express.Router();
@@ -76,7 +85,6 @@ router.post("/oauth/callback", async (req, res) => {
 
     // Get Uber store information
     // From: Store API (1.0.0) - GET /v1/delivery/stores endpoint
-    console.log("[uberRoutes] Fetching user's Uber stores...");
     const storeResponse = await axios.get(
       `${UBER_API_BASE_URL}/v1/delivery/stores`,
       {
@@ -86,10 +94,9 @@ router.post("/oauth/callback", async (req, res) => {
       }
     );
 
-    console.log("[uberRoutes] Stores fetched:", storeResponse.data);
-
     const stores = storeResponse.data.stores || [];
     const storeId = stores[0]?.id;
+    const storeName = stores[0]?.name;
 
     if (!storeId) {
       return res
@@ -97,7 +104,8 @@ router.post("/oauth/callback", async (req, res) => {
         .json({ success: false, message: "No Uber store found" });
     }
 
-  
+    // Save Uber connection (not binding yet)
+    // Binding happens when user explicitly clicks "Bind" button in ShopDetail
     await saveUberConnection({
       shop_id,
       uber_store_id: storeId,
@@ -109,13 +117,15 @@ router.post("/oauth/callback", async (req, res) => {
       connected_at: new Date().toISOString(),
     });
 
+    // Return all stores for user to choose from
+    const allStores = storeResponse.data.stores || [];
+
     res.json({
       success: true,
-      uber_store_id: storeId,
-      message: "Uber account connected successfully",
+      message: "Uber account authorized successfully",
+      stores: allStores,
     });
   } catch (error) {
-    // Log detailed error information for debugging
     const errorDetails = {
       message: error.message,
       code: error.code,
@@ -327,6 +337,226 @@ router.post("/webhook/verify", async (req, res) => {
     });
   } catch (error) {
     console.error("[uberRoutes] Webhook verify error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Get shop binding information
+ * GET /api/uber/binding?shop_id=xxx&pos_token=xxx
+ */
+router.get("/binding", async (req, res) => {
+  try {
+    const { shop_id, pos_token } = req.query;
+
+    if (!shop_id || !pos_token) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Shop ID and POS token required" });
+    }
+
+    // Get binding for this POS shop
+    const binding = await getShopBinding(shop_id);
+
+    res.json({
+      success: true,
+      binding: binding || null,
+    });
+  } catch (error) {
+    console.error("[uberRoutes] Get binding error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Get Uber stores information (returns all fetched stores for this binding)
+ * POST /api/uber/stores
+ */
+router.post("/stores", async (req, res) => {
+  try {
+    const { shop_id, pos_token } = req.body;
+
+    if (!shop_id || !pos_token) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Shop ID and POS token required" });
+    }
+
+    // Get Uber connection for this shop
+    const connection = await getUberConnection(shop_id);
+
+    if (!connection || !connection.access_token) {
+      return res.json({
+        success: true,
+        stores: [],
+        message: "No Uber connection for this shop",
+      });
+    }
+
+    // Fetch stores from Uber
+    try {
+      const storeResponse = await axios.get(
+        `${UBER_API_BASE_URL}/v1/delivery/stores`,
+        {
+          headers: {
+            Authorization: `Bearer ${connection.access_token}`,
+          },
+        }
+      );
+
+      const stores = storeResponse.data.stores || [];
+
+      res.json({
+        success: true,
+        stores: stores,
+        message: "Uber stores fetched successfully",
+      });
+    } catch (error) {
+      console.error("[uberRoutes] Failed to fetch Uber stores:", error.message);
+      res.status(500).json({
+        success: false,
+        stores: [],
+        message: "Failed to fetch Uber stores",
+      });
+    }
+  } catch (error) {
+    console.error("[uberRoutes] Get Uber stores error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Bind a specific Uber store to a POS shop
+ * POST /api/uber/bind
+ */
+router.post("/bind", async (req, res) => {
+  try {
+    const { shop_id, pos_token, uber_store_id, uber_store_name, pos_shop_name } = req.body;
+
+    if (!shop_id || !pos_token || !uber_store_id) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required parameters" });
+    }
+
+
+    // Get Uber connection for this shop to get access token
+    const connection = await getUberConnection(shop_id);
+
+    if (!connection || !connection.access_token) {
+      return res.status(400).json({
+        success: false,
+        message: "No Uber connection found for this shop",
+      });
+    }
+
+    // Save the binding first
+    await saveShopBinding({
+      pos_shop_id: shop_id,
+      pos_shop_name: pos_shop_name || shop_id,
+      uber_store_id: uber_store_id,
+      uber_store_name: uber_store_name || "Unknown Store",
+    });
+
+    // Activate integration with Uber
+    try {
+      await activateIntegration(connection.access_token, uber_store_id, {
+        integrator_store_id: shop_id,
+        merchant_store_id: pos_shop_name || shop_id,
+        is_order_manager: true,
+        require_manual_acceptance: false,
+      });
+    } catch (uberError) {
+      console.warn(
+        "[uberRoutes] ⚠️ Warning: Integration activation failed, but binding was saved:",
+        uberError.message
+      );
+      // Continue even if Uber API fails - binding is already saved locally
+    }
+
+    res.json({
+      success: true,
+      message: "Store binding completed successfully",
+      binding: {
+        pos_shop_id: shop_id,
+        pos_shop_name: pos_shop_name || shop_id,
+        uber_store_id: uber_store_id,
+        uber_store_name: uber_store_name || "Unknown Store",
+      },
+    });
+  } catch (error) {
+    console.error("[uberRoutes] ❌ Bind store error:", error.message);
+    res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+});
+
+/**
+ * Unbind a Uber store from a POS shop
+ * POST /api/uber/unbind
+ */
+router.post("/unbind", async (req, res) => {
+  try {
+    const { shop_id, pos_token } = req.body;
+
+    if (!shop_id || !pos_token) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required parameters" });
+    }
+
+    // Get the binding to find the Uber store ID
+    const binding = await getShopBinding(shop_id);
+    if (!binding) {
+      return res.status(400).json({
+        success: false,
+        message: "No binding found for this shop",
+      });
+    }
+
+    // Get Uber connection for this shop to get access token
+    const connection = await getUberConnection(shop_id);
+    if (!connection || !connection.access_token) {
+      return res.status(400).json({
+        success: false,
+        message: "No Uber connection found for this shop",
+      });
+    }
+
+    // Delete the binding locally
+    await deleteShopBinding(shop_id);
+
+    // Remove integration from Uber
+    try {
+      await removeIntegrationConfiguration(
+        connection.access_token,
+        binding.uber_store_id
+      );
+    } catch (uberError) {
+      console.warn(
+        "[uberRoutes] Warning: Integration removal failed, but binding was deleted locally:",
+        uberError.message
+      );
+      // Continue even if Uber API fails - binding is already deleted locally
+    }
+
+    res.json({
+      success: true,
+      message: "Store binding removed successfully",
+    });
+  } catch (error) {
+    console.error("[uberRoutes] Unbind store error:", error.message);
     res.status(500).json({
       success: false,
       message: error.message,

@@ -2,32 +2,28 @@ import React, { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { config } from "../config/api";
-import { ArrowLeft, AlertCircle, Info } from "lucide-react";
-import { generateUberAuthUrl } from "../services/uberService";
+import { ArrowLeft, AlertCircle, Info, Check } from "lucide-react";
+import { bindUberStore } from "../services/uberService";
 
 /**
  * ShopDetail Page
  * 
- * This page displays core shop information and Uber Eats integration status.
+ * This page displays shop information and Uber Eats integration status.
  * 
  * Two-Phase Uber Integration Flow:
  * ================================
  * 
- * Phase 1: Merchant Authorization (OAuth)
- * - User clicks "Authorize Uber Eats Merchant Account" button
+ * Phase 1: Merchant Authorization (OAuth) - Done in Locations page
  * - Redirects to Uber OAuth page
  * - User logs in and grants permission
  * - We receive access_token and refresh_token
  * - We can now call GET /stores to list all merchant's Uber stores
- * - This is platform-level authorization (not bound to specific store yet)
  * 
- * Phase 2: Store Authorization Binding  
- * - After Phase 1, merchant can choose which Uber store to bind
- * - We call GET /stores to show available stores
- * - User selects one store
- * - We call POST /pos_data to activate the binding
- * - Uber sends store.provisioned webhook
- * - Store is now fully configured and can receive orders
+ * Phase 2: Store Binding (on this page)
+ * - Display list of available Uber stores
+ * - User selects one store and clicks "Bind"
+ * - We call POST /bind to create the binding
+ * - Store is now bound to this location
  */
 
 interface ShopDetail {
@@ -38,23 +34,30 @@ interface ShopDetail {
   [key: string]: any;
 }
 
-interface UberConnection {
-  connected: boolean;
-  store_id?: string;
-  store_name?: string;
-  authorization_type?: string;
-  operating_config?: any;
+interface UberStore {
+  id: string;
+  name: string;
+  address?: string;
+}
+
+interface Binding {
+  pos_shop_id: string;
+  pos_shop_name: string;
+  uber_store_id: string;
+  uber_store_name: string;
 }
 
 export default function ShopDetailPage() {
   const { shopId } = useParams();
   const navigate = useNavigate();
   const [shop, setShop] = useState<ShopDetail | null>(null);
-  const [uberConnection, setUberConnection] = useState<UberConnection>({
-    connected: false,
-  });
+  const [uberStores, setUberStores] = useState<UberStore[]>([]);
+  const [binding, setBinding] = useState<Binding | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [binding_error, setBindingError] = useState("");
+  const [bindingInProgress, setBindingInProgress] = useState(false);
+  const [selectedStoreId, setSelectedStoreId] = useState<string>("");
 
   const posToken = localStorage.getItem("posToken");
 
@@ -68,11 +71,12 @@ export default function ShopDetailPage() {
   }, [posToken, shopId, navigate]);
 
   const loadShopDetail = async () => {
-    if (!shopId) return;
+    if (!shopId || !posToken) return;
 
     try {
       setLoading(true);
       setError("");
+      setBindingError("");
 
       // Get shop info from localStorage (passed from Shops page)
       const selectedShopId = localStorage.getItem("selected_shop_id");
@@ -88,6 +92,31 @@ export default function ShopDetailPage() {
           description: selectedShopDescription || undefined,
         };
         setShop(shopData);
+
+        // Load binding info and available Uber stores
+        try {
+          const bindingResponse = await axios.get(
+            `${config.BACKEND_API}/uber/binding?shop_id=${selectedShopId}&pos_token=${posToken}`
+          );
+          const bindingData = bindingResponse.data.binding;
+          setBinding(bindingData);
+
+          // Fetch available Uber stores
+          const storesResponse = await axios.post(
+            `${config.BACKEND_API}/uber/stores`,
+            { shop_id: selectedShopId, pos_token: posToken }
+          );
+          const stores = storesResponse.data.stores || [];
+          setUberStores(stores);
+
+          // Pre-select first unbound store
+          if (stores.length > 0 && !bindingData) {
+            setSelectedStoreId(stores[0].id);
+          }
+        } catch (err: any) {
+          console.warn("[ShopDetail] Failed to load Uber stores:", err.message);
+          // Not critical - continue loading shop detail
+        }
       } else {
         setError("Shop information not found");
       }
@@ -99,14 +128,45 @@ export default function ShopDetailPage() {
     }
   };
 
-  const [connecting, setConnecting] = useState(false);
+  const handleBindStore = async () => {
+    if (!shop || !selectedStoreId || !posToken) return;
 
-  const handleConnectUber = () => {
-    if (!shop || connecting) return;
-    console.log("[ShopDetail] Connecting to Uber for shop:", shop._id);
-    setConnecting(true);
-    const authUrl = generateUberAuthUrl(shop._id);
-    window.location.href = authUrl;
+    try {
+      setBindingInProgress(true);
+      setBindingError("");
+
+      const selectedStore = uberStores.find((s) => s.id === selectedStoreId);
+      if (!selectedStore) {
+        setBindingError("Selected store not found");
+        return;
+      }
+
+      console.log("[ShopDetail] Binding store:", selectedStoreId);
+
+      const result = await bindUberStore(
+        shop._id,
+        posToken,
+        selectedStoreId,
+        selectedStore.name,
+        shop.name
+      );
+
+      if (result.success) {
+        setBinding(result.binding as any);
+        setBindingError("");
+        // Refresh the page after a short delay
+        setTimeout(() => {
+          loadShopDetail();
+        }, 1500);
+      } else {
+        setBindingError(result.error || "Binding failed");
+      }
+    } catch (err: any) {
+      console.error("[ShopDetail] Bind error:", err);
+      setBindingError(err.message || "Failed to bind store");
+    } finally {
+      setBindingInProgress(false);
+    }
   };
 
   if (loading) {
@@ -214,8 +274,8 @@ export default function ShopDetailPage() {
                   Third-party Platform Shop ID (Uber)
                 </label>
                 <p className="text-gray-900">
-                  {uberConnection.connected && uberConnection.store_id ? (
-                    <span className="font-mono">{uberConnection.store_id}</span>
+                  {binding && binding.uber_store_id ? (
+                    <span className="font-mono">{binding.uber_store_id}</span>
                   ) : (
                     <span className="text-gray-500">—</span>
                   )}
@@ -230,8 +290,8 @@ export default function ShopDetailPage() {
                   Third-party Platform Location Name (Uber)
                 </label>
                 <p className="text-gray-900">
-                  {uberConnection.connected && uberConnection.store_name ? (
-                    uberConnection.store_name
+                  {binding && binding.uber_store_name ? (
+                    binding.uber_store_name
                   ) : (
                     <span className="text-gray-500">—</span>
                   )}
@@ -243,7 +303,7 @@ export default function ShopDetailPage() {
                   Operating Config
                 </label>
                 <p className="text-gray-900">
-                  {uberConnection.connected && uberConnection.operating_config ? (
+                  {binding ? (
                     <span className="bg-green-50 text-green-700 px-3 py-1 rounded text-sm font-medium">
                       Configured
                     </span>
@@ -270,53 +330,101 @@ export default function ShopDetailPage() {
         <div className="bg-white rounded-lg border border-gray-200 p-8 mb-8">
           <h2 className="text-xl font-bold text-black mb-6">Uber Eats Integration</h2>
 
-          {/* Phase 1: Merchant Authorization */}
-          <div className="bg-blue-50 rounded-lg p-6 border border-blue-200 mb-6">
-            <h3 className="font-semibold text-blue-900 mb-3 flex items-center gap-2">
-              <span className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold">1</span>
-              Merchant Authorization (Phase 1)
-            </h3>
-            <p className="text-sm text-blue-800 mb-4">
-              Authorize your app to access your Uber Eats merchant account. This is the first step of OAuth integration.
-            </p>
-            <div className="bg-blue-100 rounded p-3 mb-4 text-xs text-blue-900">
-              <p className="font-semibold mb-1">What happens:</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>You'll be redirected to Uber to authorize</li>
-                <li>We'll receive an access token</li>
-                <li>You can then select which store to bind</li>
-              </ul>
+          {/* Binding Error Alert */}
+          {binding_error && (
+            <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-red-700">{binding_error}</p>
             </div>
-            <button
-              onClick={handleConnectUber}
-              disabled={connecting}
-              className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
-            >
-              {connecting ? "Redirecting..." : "Authorize Uber Eats Merchant Account"}
-            </button>
-          </div>
+          )}
 
-          {/* Phase 2: Store Binding (Info only for now) */}
-          <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
-            <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-              <span className="bg-gray-400 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold">2</span>
-              Store Authorization Binding (Phase 2)
-            </h3>
-            <p className="text-sm text-gray-600 mb-4">
-              After merchant authorization, select which store to bind to this location.
-            </p>
-            <div className="bg-gray-100 rounded p-3 text-xs text-gray-700">
-              <p className="font-semibold mb-1">Available after Phase 1:</p>
-              <ul className="list-disc list-inside space-y-1">
-                <li>View available Uber stores</li>
-                <li>Select and bind a specific store</li>
-                <li>Complete store configuration</li>
-              </ul>
+          {/* Binding Status or Store Selection */}
+          {binding ? (
+            // Already Bound
+            <div className="bg-green-50 rounded-lg p-6 border border-green-200">
+              <h3 className="font-semibold text-green-900 mb-3 flex items-center gap-2">
+                <Check className="w-6 h-6" />
+                Store Bound Successfully
+              </h3>
+              <div className="space-y-3 text-sm text-green-800">
+                <p>
+                  <span className="font-semibold">POS Location:</span> {binding.pos_shop_name}
+                </p>
+                <p>
+                  <span className="font-semibold">Uber Store:</span> {binding.uber_store_name}
+                </p>
+                <p>
+                  <span className="font-semibold">Uber Store ID:</span> <span className="font-mono text-xs">{binding.uber_store_id}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setBinding(null)}
+                className="mt-4 text-sm text-green-700 hover:text-green-800 underline"
+              >
+                Bind a Different Store
+              </button>
             </div>
-            <p className="text-xs text-gray-500 mt-4">
-              Complete Phase 1 to proceed with store binding
-            </p>
-          </div>
+          ) : uberStores.length > 0 ? (
+            // Show Store Selection
+            <div className="bg-blue-50 rounded-lg p-6 border border-blue-200">
+              <h3 className="font-semibold text-blue-900 mb-4 flex items-center gap-2">
+                <span className="bg-blue-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-sm font-bold">1</span>
+                Select and Bind Uber Store
+              </h3>
+              <p className="text-sm text-blue-800 mb-4">
+                Choose which Uber store to bind to this location.
+              </p>
+
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-blue-900 mb-2">
+                  Available Stores
+                </label>
+                <div className="space-y-2">
+                  {uberStores.map((store) => (
+                    <label key={store.id} className="flex items-center gap-3 p-3 bg-white rounded border border-blue-100 hover:bg-blue-50 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="uber_store"
+                        value={store.id}
+                        checked={selectedStoreId === store.id}
+                        onChange={(e) => setSelectedStoreId(e.target.value)}
+                        className="w-4 h-4"
+                      />
+                      <div>
+                        <p className="font-medium text-gray-900">{store.name}</p>
+                        <p className="text-xs text-gray-500">{store.id}</p>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                onClick={handleBindStore}
+                disabled={bindingInProgress || !selectedStoreId}
+                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
+              >
+                {bindingInProgress ? "Binding..." : "Bind Selected Store"}
+              </button>
+            </div>
+          ) : (
+            // No Stores Available
+            <div className="bg-yellow-50 rounded-lg p-6 border border-yellow-200">
+              <h3 className="font-semibold text-yellow-900 mb-3 flex items-center gap-2">
+                <Info className="w-6 h-6" />
+                No Uber Stores Available
+              </h3>
+              <p className="text-sm text-yellow-800 mb-4">
+                Please authorize a Uber merchant account first. Go to the Locations page and click "Authorize Uber" to complete merchant authorization.
+              </p>
+              <button
+                onClick={() => navigate("/shops")}
+                className="text-sm text-yellow-700 hover:text-yellow-800 font-medium underline"
+              >
+                Go to Locations Page
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Back Button */}

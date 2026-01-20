@@ -28,6 +28,9 @@ export const UBER_API_BASE_URL = "https://test-api.uber.com";
 // Your store ID - Replace with your actual store ID
 export const STORE_ID = "f9b63b20-ad76-46bc-93bb-76c9e86e9e22";
 
+// Integrator Configuration for POS binding
+export const INTEGRATOR_BRAND_ID = "Vend88-sandbox";
+
 // Webhook configuration
 export const WEBHOOK_ENDPOINT = "http://localhost:3000/ubereats/webhook";
 

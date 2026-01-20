@@ -11,8 +11,8 @@ const backendApi = axios.create({
 // Type definitions for API responses
 interface OAuthCallbackResponse {
   success: boolean;
-  uber_store_id?: string;
   message: string;
+  stores?: Array<{ id: string; name: string }>;
 }
 
 interface DisconnectResponse {
@@ -77,7 +77,7 @@ export async function handleUberOAuthCallback(
     if (response.data.success) {
       return {
         success: true,
-        store_id: response.data.uber_store_id,
+        stores: response.data.stores || [],
         message: "Uber account connected successfully",
       };
     }
@@ -194,6 +194,76 @@ export async function verifyWebhookConfig(
       verified: false,
       error: error instanceof Error ? error.message : "Verification failed",
     };
+  }
+}
+
+interface BindUberStoreResponse {
+  success: boolean;
+  binding?: unknown;
+  message: string;
+}
+
+interface UnbindUberStoreResponse {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * Bind a Uber store to a POS shop
+ */
+export async function bindUberStore(
+  shopId: string,
+  uberStoreId: string,
+  uberStoreName: string,
+  posToken: string,
+  posShopName: string
+) {
+  try {
+    const response = await backendApi.post<BindUberStoreResponse>("/uber/bind", {
+      shop_id: shopId,
+      pos_token: posToken,
+      uber_store_id: uberStoreId,
+      uber_store_name: uberStoreName,
+      pos_shop_name: posShopName,
+    });
+
+    if (response.data.success) {
+      return {
+        success: true,
+        binding: response.data.binding,
+        message: "Store bound successfully",
+      };
+    }
+
+    throw new Error(response.data.message || "Binding failed");
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("Network error");
+  }
+}
+
+/**
+ * Unbind a Uber store from a POS shop
+ */
+export async function unbindUberStore(
+  shopId: string,
+  posToken: string
+) {
+  try {
+    const response = await backendApi.post<UnbindUberStoreResponse>("/uber/unbind", {
+      shop_id: shopId,
+      pos_token: posToken,
+    });
+
+    if (response.data.success) {
+      return {
+        success: true,
+        message: "Store unbound successfully",
+      };
+    }
+
+    throw new Error(response.data.message || "Unbinding failed");
+  } catch (error) {
+    throw error instanceof Error ? error : new Error("Network error");
   }
 }
 

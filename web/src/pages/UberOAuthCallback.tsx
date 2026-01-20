@@ -77,17 +77,18 @@ export default function UberOAuthCallbackPage() {
       }
 
       // Exchange code for token via backend
-      console.log("[UberOAuthCallback] Exchanging code for token...");
       const result = await handleUberOAuthCallback(code, state, posToken);
 
       if (result.success) {
         setStatus("success");
         setMessage("Authorization successful! Redirecting...");
-        console.log("[UberOAuthCallback] Success, store_id:", result.store_id);
         
-        // Redirect back to shop detail
+        // Backend has already saved the access_token to database
+        // No need for temporary localStorage storage
+        
+        // Redirect back to shops page - it will fetch stores from backend
         setTimeout(() => {
-          navigate(`/shop/${state}`, { replace: true });
+          navigate("/shops", { replace: true });
         }, 2000);
       } else {
         setStatus("error");
