@@ -2,7 +2,6 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import LoginPage from "./pages/Login";
 import ShopsPage from "./pages/Shops";
-import ShopDetailPage from "./pages/ShopDetail";
 import MenuSyncPage from "./pages/MenuSync";
 import UberOAuthCallbackPage from "./pages/UberOAuthCallback";
 
@@ -29,15 +28,6 @@ function App() {
           element={
             <ProtectedRoute>
               <ShopsPage />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/shop/:shopId"
-          element={
-            <ProtectedRoute>
-              <ShopDetailPage />
             </ProtectedRoute>
           }
         />

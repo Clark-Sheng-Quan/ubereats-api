@@ -56,7 +56,7 @@ export default function MenuSyncPage() {
       setError("");
 
       const [productsResponse, historyData] = await Promise.all([
-        axios.post("http://localhost:3000/api/service/pos/products", {
+        axios.post<{ success: boolean; data: Product[] }>("http://localhost:3000/api/service/pos/products", {
           token: posToken,
           shopId: shopId,
         }),
@@ -74,7 +74,7 @@ export default function MenuSyncPage() {
         setError("Failed to load products");
       }
 
-      setSyncHistory(historyData);
+      setSyncHistory(historyData as SyncHistoryItem[]);
     } catch (err: any) {
       setError(err.response?.data?.error || err.message || "Failed to load menu data");
     } finally {

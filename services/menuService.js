@@ -210,8 +210,8 @@ export async function uploadMenu(storeId, menuConfig) {
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Failed to upload menu: ${response.status} ${error}`);
+    throw new Error(`[menuService] Failed to upload menu: ${response.status} ${error}`);
   }
 
   console.log(`   ✅ Menu uploaded successfully (204 No Content)`);
-  console.log(`   Use Get Menu endpoint to verify`);}
+  console.log(`   [menuService] Use Get Menu endpoint to verify`);}

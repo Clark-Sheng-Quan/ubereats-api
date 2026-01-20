@@ -47,8 +47,8 @@ export async function activateIntegration(accessToken, storeId, posData) {
 
     const url = `${UBER_API_BASE_URL}/v1/eats/stores/${storeId}/pos_data`;
 
-    console.log("[integrationService] URL:", url);
-    console.log("[integrationService] Access Token:", accessToken);
+    // console.log("[integrationService] URL:", url);
+    // console.log("[integrationService] Access Token:", accessToken);
 
     const response = await axios.post(url, payload, {
       headers: {
@@ -56,7 +56,7 @@ export async function activateIntegration(accessToken, storeId, posData) {
         "Content-Type": "application/json",
       },
     });
-    console.log("[integrationService] Response:", response.data);
+    console.log("Integration activated successfully for store:");
     return {
       success: true,
       data: response.data,
@@ -151,7 +151,7 @@ export async function retrieveIntegrationConfiguration(accessToken, storeId) {
     };
   } catch (error) {
     if (error.response?.status === 404) {
-      console.log(`[integrationService] No integration found for store ${storeId}`);
+      console.warn(`[integrationService] No integration found for store ${storeId}`);
       return {
         success: true,
         data: null,

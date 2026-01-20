@@ -49,12 +49,11 @@ export function saveOrderToStorage(orderData) {
     // Write back to file
     fs.writeFileSync(ordersFile, JSON.stringify(orders, null, 2), "utf8");
   } catch (error) {
-    console.error(`   ❌ Error saving order to storage:`, error.message);
+    console.error("[localService] Error saving order to storage:", error.message);
   }
 }
 
 /**
- * Log webhook events for debugging and audit trail
  * @param {Object} webhookData - The webhook payload
  */
 export function logWebhook(webhookData) {
@@ -67,8 +66,6 @@ export function logWebhook(webhookData) {
       const content = fs.readFileSync(logsFile, "utf8");
       logs = content ? JSON.parse(content) : [];
     }
-
-    // Add new log entry (keep only last 1000 entries)
     logs.push({
       timestamp: new Date().toISOString(),
       event_id: webhookData.event_id,
@@ -82,12 +79,12 @@ export function logWebhook(webhookData) {
 
     fs.writeFileSync(logsFile, JSON.stringify(logs, null, 2), "utf8");
   } catch (error) {
-    console.error("Error logging webhook:", error.message);
+    console.error("[localService] Error logging webhook:", error.message);
   }
 }
 
 /**
- * Log actions for audit trail
+
  * @param {string} orderId - Order ID
  * @param {string} action - Action name
  * @param {Object} details - Action details
@@ -119,7 +116,7 @@ export function logAction(orderId, action, details) {
 
     fs.writeFileSync(logsFile, JSON.stringify(actions, null, 2), "utf8");
   } catch (error) {
-    console.error("Error logging action:", error.message);
+    console.error("[localService] Error logging action:", error.message);
   }
 }
 
@@ -136,7 +133,7 @@ export function getAllOrders() {
     }
     return [];
   } catch (error) {
-    console.error("Error reading orders:", error.message);
+    console.error("[localService] Error reading orders:", error.message);
     return [];
   }
 }
@@ -178,7 +175,7 @@ export function updateOrderStatus(orderId, status) {
 
     return false;
   } catch (error) {
-    console.error("Error updating order status:", error.message);
+    console.error("[localService] Error updating order status:", error.message);
     return false;
   }
 }
@@ -210,7 +207,7 @@ export function saveUberConnection(connectionData) {
 
     fs.writeFileSync(file, JSON.stringify(connections, null, 2), "utf8");
   } catch (error) {
-    console.error("Error saving Uber connection:", error.message);
+    console.error("[localService] Error saving Uber connection:", error.message);
   }
 }
 
@@ -229,7 +226,7 @@ export function getUberConnection(shopId) {
     }
     return null;
   } catch (error) {
-    console.error("Error reading Uber connection:", error.message);
+    console.error("[localService] Error reading Uber connection:", error.message);
     return null;
   }
 }
@@ -248,7 +245,7 @@ export function deleteUberConnection(shopId) {
       fs.writeFileSync(file, JSON.stringify(connections, null, 2), "utf8");
     }
   } catch (error) {
-    console.error("Error deleting Uber connection:", error.message);
+    console.error("[localService] Error deleting Uber connection:", error.message);
   }
 }
 
@@ -289,9 +286,9 @@ export function saveSyncHistory(syncData) {
     });
 
     fs.writeFileSync(file, JSON.stringify(history, null, 2), "utf8");
-    console.log(`✅ Sync history saved for shop ${syncData.shop_id}`);
+    console.log(`[localService]✅ Sync history saved for shop ${syncData.shop_id}`);
   } catch (error) {
-    console.error("Error saving sync history:", error.message);
+    console.error("[localService] Error saving sync history:", error.message);
   }
 }
 
@@ -310,7 +307,7 @@ export function getSyncHistory(shopId) {
     }
     return [];
   } catch (error) {
-    console.error("Error reading sync history:", error.message);
+    console.error("[localService] Error reading sync history:", error.message);
     return [];
   }
 }
