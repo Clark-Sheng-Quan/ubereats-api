@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-d
 import LoginPage from "./pages/Login";
 import ShopsPage from "./pages/Shops";
 import MenuSyncPage from "./pages/MenuSync";
+import ShopDashboardPage from "./pages/ShopDashboard";
 import UberOAuthCallbackPage from "./pages/UberOAuthCallback";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -37,6 +38,15 @@ function App() {
           element={
             <ProtectedRoute>
               <MenuSyncPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/shop-dashboard/:shopId/:uberStoreId"
+          element={
+            <ProtectedRoute>
+              <ShopDashboardPage />
             </ProtectedRoute>
           }
         />

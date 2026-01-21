@@ -4,7 +4,7 @@ import axios from "axios";
 import { config } from "../config/api";
 import { generateUberAuthUrl } from "../services/uberService";
 import { AlertCircle, LogOut, LogIn, X } from "lucide-react";
-import { bindUberStore, unbindUberStore } from "../services/uberService";
+import { bindUberStore } from "../services/uberService";
 
 interface Shop {
   _id: string;
@@ -208,19 +208,11 @@ export default function ShopsPage() {
     }
   };
 
-  const handleUnbind = async (shop: Shop) => {
-    if (!window.confirm(`Are you sure you want to unbind ${shop.name}?`)) {
-      return;
-    }
-
-    try {
-      await unbindUberStore(shop._id, posToken || "");
-      setError("");
-      // Reload data to refresh binding status
-      loadData();
-    } catch (err: any) {
-      setError(err.message || "Failed to unbind store");
-    }
+  const handleManage = (shop: Shop) => {
+    const shopBinding = bindings[shop._id];
+    if (!shopBinding) return;
+    
+    navigate(`/shop-dashboard/${shop._id}/${shopBinding.uber_store_id}`);
   };
 
   if (loading) {
@@ -346,10 +338,10 @@ export default function ShopsPage() {
                       <td className="px-6 py-4 text-sm">
                         {shopBinding ? (
                           <button
-                            onClick={() => handleUnbind(shop)}
-                            className="text-red-600 hover:text-red-700 font-medium"
+                            onClick={() => handleManage(shop)}
+                            className="text-blue-600 hover:text-blue-700 font-medium"
                           >
-                            Unbind
+                            Manage
                           </button>
                         ) : (
                           <button
@@ -420,7 +412,9 @@ export default function ShopsPage() {
             <div className="flex items-center justify-between p-6 border-b border-gray-200">
               <h3 className="text-lg font-semibold text-gray-900">Bind Uber Store</h3>
               <button
+                type="button"
                 onClick={handleCloseBindModal}
+                aria-label="Close bind modal"
                 className="text-gray-400 hover:text-gray-600"
               >
                 <X size={20} />

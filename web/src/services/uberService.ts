@@ -283,3 +283,88 @@ export async function getSyncHistory(shopId: string, posToken: string) {
     return [];
   }
 }
+
+/**
+ * 更新店铺信息（联系方式、位置、取餐说明）
+ */
+export async function updateStoreInfo(
+  storeId: string,
+  updateData: {
+    contact?: { email?: string; name?: string; phone_number?: string };
+    location?: {
+      latitude?: number;
+      longitude?: number;
+      street_address_line_one?: string;
+      street_address_line_two?: string;
+      city?: string;
+      country?: string;
+      postal_code?: string | number;
+    };
+    pickup_instructions?: string;
+  }
+) {
+  try {
+    const response = await axios.post(`${config.BACKEND_API}/store/${storeId}/info`, updateData);
+    return { success: true, message: "Store info updated successfully", data: response.data };
+  } catch (error: any) {
+    throw error instanceof Error ? error : new Error("Failed to update store info");
+  }
+}
+
+/**
+ * 更新店铺状态（ONLINE/OFFLINE）
+ */
+export async function updateStoreStatus(
+  storeId: string,
+  status: "ONLINE" | "OFFLINE",
+  reason?: string,
+  is_offline_until?: string
+) {
+  try {
+    const payload: any = { status };
+    if (reason) payload.reason = reason;
+    if (is_offline_until) payload.is_offline_until = is_offline_until;
+
+    const response = await axios.post(`${config.BACKEND_API}/store/${storeId}/status`, payload);
+    return { success: true, message: "Store status updated successfully", data: response.data };
+  } catch (error: any) {
+    throw error instanceof Error ? error : new Error("Failed to update store status");
+  }
+}
+
+/**
+ * 更新店铺准备时间
+ */
+export async function updateStorePrepTime(storeId: string, defaultPrepTimeMinutes: number) {
+  try {
+    const response = await axios.post(`${config.BACKEND_API}/store/${storeId}/prep-time`, {
+      default_prep_time: defaultPrepTimeMinutes,
+    });
+    return { success: true, message: "Prep time updated successfully", data: response.data };
+  } catch (error: any) {
+    throw error instanceof Error ? error : new Error("Failed to update prep time");
+  }
+}
+
+/**
+ * 更新店铺配送配置
+ */
+export async function updateFulfillmentConfig(
+  storeId: string,
+  customMinEtdMinutes?: number
+) {
+  try {
+    const payload: any = {};
+    if (customMinEtdMinutes !== undefined) {
+      payload.custom_min_etd_minutes = customMinEtdMinutes;
+    }
+
+    const response = await axios.post(
+      `${config.BACKEND_API}/store/${storeId}/fulfillment-config`,
+      payload
+    );
+    return { success: true, message: "Fulfillment config updated successfully", data: response.data };
+  } catch (error: any) {
+    throw error instanceof Error ? error : new Error("Failed to update fulfillment config");
+  }
+}
