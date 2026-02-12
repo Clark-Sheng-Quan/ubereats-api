@@ -1,139 +1,161 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import axios from "axios";
-import { syncMenuToUber, getSyncHistory } from "../services/uberService";
-import { CheckCircle, AlertCircle, Upload, ArrowLeft } from "lucide-react";
+import { getStoreMenu, updateMenuItem } from "../services/uberService";
+import { CheckCircle, AlertCircle, RefreshCw, Edit2, X, Save, ArrowLeft } from "lucide-react";
 
-interface Product {
-  product_id: string;
-  product_name: string;
-  unit_price: number;
-  description?: string;
-  category_name?: string;
+interface MenuItem {
+  id: string;
+  title?: {
+    translations?: Record<string, string>;
+  };
+  description?: {
+    translations?: Record<string, string>;
+  };
+  price_info?: {
+    price?: number;
+  };
+  suspension_info?: {
+    suspended?: boolean;
+  };
+  product_info?: Record<string, any>;
+  classifications?: Record<string, any>;
 }
 
-interface SyncHistoryItem {
-  synced_at: string;
-  synced_count: number;
-  status: "success" | "partial" | "failed";
+interface MenuEntity {
+  id: string;
+  type: "ITEM" | "MODIFIER_GROUP";
+}
+
+interface MenuCategory {
+  id: string;
+  title?: {
+    translations?: Record<string, string>;
+  };
+  entities?: MenuEntity[];
+}
+
+interface MenuData {
+  menus?: Array<{
+    id: string;
+    name: string;
+  }>;
+  categories?: MenuCategory[];
+  items?: MenuItem[];
+  modifier_groups?: any[];
+}
+
+interface EditingItem {
+  storeId: string;
+  itemId: string;
+  field: string;
+  value: any;
 }
 
 export default function MenuSyncPage() {
-  const { shopId } = useParams();
+  const { uberStoreId } = useParams();
   const navigate = useNavigate();
 
-  const [products, setProducts] = useState<Product[]>([]);
-  const [selectedProducts, setSelectedProducts] = useState<Set<string>>(
-    new Set()
-  );
+  const [menuData, setMenuData] = useState<MenuData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncHistory, setSyncHistory] = useState<SyncHistoryItem[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
-  const [syncResult, setSyncResult] = useState<{
-    success: boolean;
-    message?: string;
-    count?: number;
-    errors?: string[];
-  } | null>(null);
-
-  const posToken = localStorage.getItem("posToken");
+  const [success, setSuccess] = useState("");
+  const [editingItem, setEditingItem] = useState<EditingItem | null>(null);
+  const [editValue, setEditValue] = useState("");
+  const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!posToken || !shopId) {
+    if (!uberStoreId) {
       navigate("/shops");
       return;
     }
 
-    loadMenuData();
-  }, [posToken, shopId, navigate]);
+    loadMenu();
+  }, [uberStoreId, navigate]);
 
-  const loadMenuData = async () => {
-    if (!posToken || !shopId) return;
+  const loadMenu = async () => {
+    if (!uberStoreId) return;
 
     try {
       setLoading(true);
       setError("");
+      setSuccess("");
 
-      const [productsResponse, historyData] = await Promise.all([
-        axios.post<{ success: boolean; data: Product[] }>("http://localhost:3000/api/service/pos/products", {
-          token: posToken,
-          shopId: shopId,
-        }),
-        getSyncHistory(shopId, posToken),
-      ]);
-
-      if (productsResponse.data.success && Array.isArray(productsResponse.data.data)) {
-        const productsData = productsResponse.data.data;
-        setProducts(productsData);
-
-        // Select all products by default
-        const allIds = new Set(productsData.map((p: Product) => p.product_id));
-        setSelectedProducts(allIds);
-      } else {
-        setError("Failed to load products");
-      }
-
-      setSyncHistory(historyData as SyncHistoryItem[]);
+      const data = await getStoreMenu(uberStoreId);
+      setMenuData(data);
     } catch (err: any) {
-      setError(err.response?.data?.error || err.message || "Failed to load menu data");
+      setError(err.response?.data?.error || err.message || "Failed to load menu");
     } finally {
       setLoading(false);
     }
   };
 
-  const toggleProduct = (productId: string) => {
-    const newSelected = new Set(selectedProducts);
-    if (newSelected.has(productId)) {
-      newSelected.delete(productId);
-    } else {
-      newSelected.add(productId);
-    }
-    setSelectedProducts(newSelected);
-  };
-
-  const toggleAll = () => {
-    if (selectedProducts.size === products.length) {
-      setSelectedProducts(new Set());
-    } else {
-      setSelectedProducts(new Set(products.map((p) => p.product_id)));
-    }
-  };
-
-  const handleSync = async () => {
-    if (!posToken || !shopId || selectedProducts.size === 0) {
-      setError("Please select at least one product to sync");
-      return;
-    }
-
-    const productsToSync = products.filter((p) =>
-      selectedProducts.has(p.product_id)
-    );
+  const handleRefresh = async () => {
+    if (!uberStoreId) return;
 
     try {
-      setSyncing(true);
-      setSyncResult(null);
+      setRefreshing(true);
+      setError("");
+      setSuccess("");
+
+      const data = await getStoreMenu(uberStoreId);
+      setMenuData(data);
+      setSuccess("Menu refreshed successfully");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || "Failed to refresh menu");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  const startEditingItem = (storeId: string, itemId: string, field: string, currentValue: any) => {
+    setEditingItem({ storeId, itemId, field, value: currentValue });
+    setEditValue(String(currentValue));
+  };
+
+  const cancelEditing = () => {
+    setEditingItem(null);
+    setEditValue("");
+  };
+
+  const saveItemUpdate = async () => {
+    if (!editingItem || !uberStoreId) return;
+
+    try {
+      setUpdatingItemId(editingItem.itemId);
       setError("");
 
-      const result = await syncMenuToUber(shopId, posToken, productsToSync);
-
-      setSyncResult({
-        success: result.success,
-        message: result.message,
-        count: result.synced_count,
-        errors: result.errors,
-      });
-
-      if (result.success) {
-        setTimeout(() => loadMenuData(), 1000);
+      const updateData: Record<string, any> = {};
+      
+      // 根据字段类型构建更新数据
+      if (editingItem.field === "price") {
+        // Convert dollars to cents (e.g., 10.99 → 1099)
+        const priceInCents = Math.round(parseFloat(editValue) * 100);
+        updateData.price_info = { price: priceInCents };
+      } else if (editingItem.field === "suspended") {
+        updateData.suspension_info = { suspended: editValue === "true" };
+      } else if (editingItem.field === "name") {
+        updateData.product_info = { product_name: editValue };
+      } else if (editingItem.field === "description") {
+        updateData.product_info = { product_description: editValue };
+      } else {
+        updateData[editingItem.field] = editValue;
       }
-    } catch (err) {
-      setSyncResult({
-        success: false,
-        message: err instanceof Error ? err.message : "Sync failed",
-      });
+
+      await updateMenuItem(uberStoreId, editingItem.itemId, updateData);
+
+      // 更新本地状态
+      setSuccess(`Item updated successfully`);
+      setTimeout(() => setSuccess(""), 3000);
+      
+      // 重新加载菜单
+      await loadMenu();
+      setEditingItem(null);
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || "Failed to update item");
     } finally {
-      setSyncing(false);
+      setUpdatingItemId(null);
     }
   };
 
@@ -142,37 +164,74 @@ export default function MenuSyncPage() {
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-black mx-auto mb-4"></div>
-          <p className="text-gray-600">Loading menu data...</p>
+          <p className="text-gray-600">Loading menu...</p>
         </div>
       </div>
     );
   }
 
-  const categories = Array.from(
-    new Set(products.map((p) => p.category_name || "Uncategorized"))
-  );
-  const groupedProducts = categories.map((category) => ({
-    category,
-    products: products.filter((p) => (p.category_name || "Uncategorized") === category),
-  }));
+  // Helper function to get translated text
+  const getText = (textObj: any): string => {
+    if (!textObj) return "—";
+    if (typeof textObj === "string") return textObj;
+    if (textObj.translations) {
+      // Try en_us first, then en, then first available
+      return textObj.translations["en_us"] || textObj.translations["en"] || Object.values(textObj.translations)[0] || "—";
+    }
+    return "—";
+  };
+
+  // Build categories with their items
+  const categories = (menuData?.categories || []).map((category) => {
+    const categoryItems = (category.entities || [])
+      .map((entity) => {
+        const item = menuData?.items?.find((i) => i.id === entity.id);
+        return item
+          ? {
+              ...item,
+              name: getText(item.title),
+              description: getText(item.description),
+            }
+          : null;
+      })
+      .filter(Boolean) as any[];
+
+    return {
+      id: category.id,
+      name: getText(category.title),
+      items: categoryItems,
+    };
+  });
+
+  const totalItems = categories.reduce((sum, cat) => sum + (cat.items?.length || 0), 0);
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-4">
-          <button
-            onClick={() => navigate("/shops")}
-            className="text-gray-600 hover:text-black transition-colors"
-          >
-            <ArrowLeft className="w-6 h-6" />
-          </button>
-          <div>
-            <h1 className="text-2xl font-bold text-black">Sync Menu to Uber</h1>
-            <p className="text-sm text-gray-600 mt-1">
-              Select products to sync from your POS system
-            </p>
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => navigate("/shops")}
+              className="text-gray-600 hover:text-black transition-colors"
+            >
+              <ArrowLeft className="w-6 h-6" />
+            </button>
+            <div>
+              <h1 className="text-2xl font-bold text-black">Uber Menu</h1>
+              <p className="text-sm text-gray-600 mt-1">
+                {totalItems} items across {categories.length} categories
+              </p>
+            </div>
           </div>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded font-semibold hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+            {refreshing ? "Refreshing..." : "Refresh Menu"}
+          </button>
         </div>
       </div>
 
@@ -181,153 +240,137 @@ export default function MenuSyncPage() {
         {error && (
           <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            <p className="text-sm text-red-700">{error}</p>
-          </div>
-        )}
-
-        {/* Sync Result */}
-        {syncResult && (
-          <div
-            className={`mb-6 rounded-lg p-4 flex items-start gap-3 border ${
-              syncResult.success
-                ? "bg-green-50 border-green-200"
-                : "bg-red-50 border-red-200"
-            }`}
-          >
-            {syncResult.success ? (
-              <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
-            ) : (
-              <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-            )}
             <div className="flex-1">
-              <p
-                className={`text-sm font-semibold ${
-                  syncResult.success ? "text-green-700" : "text-red-700"
-                }`}
-              >
-                {syncResult.message}
-              </p>
-              {syncResult.count !== undefined && (
-                <p className={`text-sm mt-1 ${
-                  syncResult.success ? "text-green-600" : "text-red-600"
-                }`}>
-                  Synced: {syncResult.count} products
-                </p>
-              )}
-              {syncResult.errors && syncResult.errors.length > 0 && (
-                <ul className="text-xs text-red-600 mt-2 space-y-1">
-                  {syncResult.errors.slice(0, 3).map((err, i) => (
-                    <li key={i}>• {err}</li>
-                  ))}
-                  {syncResult.errors.length > 3 && (
-                    <li>• ... and {syncResult.errors.length - 3} more</li>
-                  )}
-                </ul>
-              )}
+              <p className="text-sm font-semibold text-red-700">Error</p>
+              <p className="text-sm text-red-600 mt-1">{error}</p>
             </div>
+            <button
+              onClick={() => setError("")}
+              className="text-red-600 hover:text-red-700"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
         )}
 
-        {/* Selection Controls */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <input
-              type="checkbox"
-              checked={selectedProducts.size === products.length}
-              onChange={toggleAll}
-              className="w-5 h-5 text-black rounded cursor-pointer"
-            />
-            <span className="text-sm font-semibold text-gray-700">
-              {selectedProducts.size} of {products.length} selected
-            </span>
+        {/* Success Alert */}
+        {success && (
+          <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
+            <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-green-700">{success}</p>
           </div>
-          <button
-            onClick={handleSync}
-            disabled={syncing || selectedProducts.size === 0}
-            className="flex items-center gap-2 bg-black text-white px-6 py-2 rounded font-semibold hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <Upload className="w-4 h-4" />
-            {syncing ? "Syncing..." : "Sync to Uber"}
-          </button>
-        </div>
+        )}
 
-        {/* Products List */}
-        <div className="space-y-6">
-          {groupedProducts.map(({ category, products: categoryProducts }) => (
-            <div key={category}>
-              <h3 className="text-lg font-bold text-black mb-3">{category}</h3>
-              <div className="space-y-2 bg-white rounded-lg border border-gray-200 overflow-hidden">
-                {categoryProducts.map((product, index) => (
-                  <div
-                    key={product.product_id}
-                    className={`p-4 flex items-start gap-4 border-b last:border-b-0 ${
-                      selectedProducts.has(product.product_id)
-                        ? "bg-blue-50"
-                        : "bg-white"
-                    } hover:bg-gray-50 transition-colors cursor-pointer`}
-                    onClick={() => toggleProduct(product.product_id)}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedProducts.has(product.product_id)}
-                      onChange={() => toggleProduct(product.product_id)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="w-5 h-5 text-black rounded cursor-pointer mt-0.5"
-                    />
-                    <div className="flex-1">
-                      <h4 className="font-semibold text-black mb-1">
-                        {product.product_name}
-                      </h4>
-                      {product.description && (
-                        <p className="text-sm text-gray-600 mb-2">
-                          {product.description}
-                        </p>
+        {/* Menu Categories */}
+        {categories.length > 0 ? (
+          <div className="space-y-8">
+            {categories.map((category) => (
+              <div key={category.id}>
+                <h2 className="text-xl font-bold text-black mb-4">{category.name}</h2>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {category.items?.map((item) => (
+                    <div
+                      key={item.id}
+                      className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
+                    >
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex-1">
+                          {editingItem && editingItem.itemId === item.id && editingItem.field === "name" ? (
+                            <input
+                              type="text"
+                              value={editValue}
+                              onChange={(e) => setEditValue(e.target.value)}
+                              className="w-full px-2 py-1 border border-gray-300 rounded text-sm font-bold text-black"
+                              disabled={updatingItemId === item.id}
+                            />
+                          ) : (
+                            <h3 className="font-bold text-black">{item.name}</h3>
+                          )}
+                        </div>
+                        <span
+                          className={`text-xs font-semibold px-3 py-1 rounded-full flex-shrink-0 ml-2 ${
+                            item.suspension_info?.suspended
+                              ? "bg-red-100 text-red-700"
+                              : "bg-green-100 text-green-700"
+                          }`}
+                        >
+                          {item.suspension_info?.suspended ? "Suspended" : "Active"}
+                        </span>
+                      </div>
+
+                      {/* Description */}
+                      {item.description && (
+                        <p className="text-sm text-gray-600 mb-3">{item.description}</p>
                       )}
-                      <p className="text-sm text-gray-500">
-                        ID: {product.product_id}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-bold text-black">
-                        ${product.unit_price.toFixed(2)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
 
-        {/* Sync History */}
-        {syncHistory.length > 0 && (
-          <div className="mt-8 bg-white rounded-lg border border-gray-200 p-6">
-            <h3 className="text-lg font-bold text-black mb-4">Sync History</h3>
-            <div className="space-y-3">
-              {syncHistory.slice(0, 5).map((item, index) => (
-                <div key={index} className="flex items-center justify-between py-2 border-b last:border-b-0">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700">
-                      {new Date(item.synced_at).toLocaleString()}
-                    </p>
-                    <p className="text-xs text-gray-600">
-                      {item.synced_count} products
-                    </p>
-                  </div>
-                  <span
-                    className={`text-xs font-semibold px-3 py-1 rounded-full ${
-                      item.status === "success"
-                        ? "bg-green-100 text-green-700"
-                        : item.status === "partial"
-                        ? "bg-yellow-100 text-yellow-700"
-                        : "bg-red-100 text-red-700"
-                    }`}
-                  >
-                    {item.status}
-                  </span>
+                      {/* Item ID */}
+                      <p className="text-xs text-gray-500 mb-4">ID: {item.id}</p>
+
+                      {/* Price and Actions */}
+                      <div className="flex items-center justify-between pt-4 border-t border-gray-100">
+                        <div className="flex items-center gap-4">
+                          <div>
+                            <p className="text-xs text-gray-600">Price</p>
+                            {editingItem && editingItem.itemId === item.id && editingItem.field === "price" ? (
+                              <input
+                                type="number"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                step="0.01"
+                                className="w-20 px-2 py-1 border border-gray-300 rounded text-sm font-bold text-black"
+                                disabled={updatingItemId === item.id}
+                              />
+                            ) : (
+                              <p className="font-bold text-black">
+                                ${((item.price_info?.price || 0) / 100).toFixed(2)}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Edit/Save/Cancel Buttons */}
+                        {editingItem?.itemId === item.id ? (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={saveItemUpdate}
+                              disabled={updatingItemId === item.id}
+                              className="flex items-center gap-1 bg-green-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-green-700 disabled:opacity-50"
+                            >
+                              <Save className="w-4 h-4" />
+                              Save
+                            </button>
+                            <button
+                              onClick={cancelEditing}
+                              disabled={updatingItemId === item.id}
+                              className="flex items-center gap-1 bg-gray-300 text-black px-3 py-1 rounded text-sm font-semibold hover:bg-gray-400 disabled:opacity-50"
+                            >
+                              <X className="w-4 h-4" />
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => startEditingItem(uberStoreId || "", item.id, "price", ((item.price_info?.price || 0) / 100).toFixed(2))}
+                            className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-blue-700"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+            <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600 font-semibold">No menu items found</p>
+            <p className="text-sm text-gray-500 mt-2">
+              Your Uber store menu is empty. Contact Uber support to add menu items.
+            </p>
           </div>
         )}
       </div>

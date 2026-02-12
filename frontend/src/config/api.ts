@@ -1,7 +1,8 @@
 // Web后台的API配置
 export const config = {
   // POS系统API - 通过ngrok隧道
-  POS_API_BASE: "https://caesural-magali-graphic.ngrok-free.dev/api/service/pos",
+  POS_API_BASE: "http://localhost:3000/api/service/pos",
+  // NGROK_URL: "https://caesural-magali-graphic.ngrok-free.dev/api/service/pos",
   
   // Uber API配置
   UBER_API_BASE: "https://api.uber.com/v2",

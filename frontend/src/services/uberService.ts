@@ -368,3 +368,59 @@ export async function updateFulfillmentConfig(
     throw error instanceof Error ? error : new Error("Failed to update fulfillment config");
   }
 }
+
+/**
+ * 获取店铺菜单
+ */
+export async function getStoreMenu(storeId: string, menuType?: string) {
+  try {
+    const params = new URLSearchParams();
+    if (menuType) {
+      params.append("menu_type", menuType);
+    }
+
+    const response = await axios.get(
+      `${config.BACKEND_API}/menu/${storeId}${params.toString() ? "?" + params.toString() : ""}`
+    );
+    return response.data;
+  } catch (error: any) {
+    console.error("Failed to fetch menu:", error);
+    throw error instanceof Error ? error : new Error("Failed to fetch menu");
+  }
+}
+
+/**
+ * 更新单个菜单项
+ */
+export async function updateMenuItem(
+  storeId: string,
+  itemId: string,
+  updateData: Record<string, any>
+) {
+  try {
+    const response = await axios.post(
+      `${config.BACKEND_API}/menu/${storeId}/items/${itemId}`,
+      updateData
+    );
+    return { success: true, message: "Menu item updated successfully", data: response.data };
+  } catch (error: any) {
+    console.error("Failed to update menu item:", error);
+    throw error instanceof Error ? error : new Error("Failed to update menu item");
+  }
+}
+
+/**
+ * 上传完整菜单
+ */
+export async function uploadMenu(storeId: string, menuData: Record<string, any>) {
+  try {
+    const response = await axios.put(
+      `${config.BACKEND_API}/menu/${storeId}`,
+      menuData
+    );
+    return { success: true, message: "Menu uploaded successfully", data: response.data };
+  } catch (error: any) {
+    console.error("Failed to upload menu:", error);
+    throw error instanceof Error ? error : new Error("Failed to upload menu");
+  }
+}

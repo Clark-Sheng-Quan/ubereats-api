@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { config } from "../config/api";
 import { generateUberAuthUrl } from "../services/uberService";
-import { AlertCircle, LogOut, LogIn, X } from "lucide-react";
+import { AlertCircle, LogOut, LogIn, X, UtensilsCrossed } from "lucide-react";
 import { bindUberStore } from "../services/uberService";
 
 interface Shop {
@@ -300,6 +300,7 @@ export default function ShopsPage() {
                     <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Uber Store ID</th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Uber Store Name</th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Status</th>
+                    <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Menu</th>
                     <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Action</th>
                   </tr>
                 </thead>
@@ -333,6 +334,19 @@ export default function ShopsPage() {
                           <span className="px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs font-medium">
                             Unbound
                           </span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-sm">
+                        {shopBinding ? (
+                          <button
+                            onClick={() => navigate(`/menu-sync/${shopBinding.uber_store_id}`)}
+                            className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                          >
+                            <UtensilsCrossed size={16} />
+                            View Menu
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">—</span>
                         )}
                       </td>
                       <td className="px-6 py-4 text-sm">

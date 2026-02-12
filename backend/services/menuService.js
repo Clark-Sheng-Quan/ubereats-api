@@ -52,7 +52,13 @@ export async function getMenu(storeId, menuType = null) {
   }
 
   const data = await response.json();
-  console.log(`   ✅ Menu retrieved: ${data.items?.length || 0} items, ${data.categories?.length || 0} categories`);
+  console.log(`\n[menuService] Full response from Uber API:`);
+  console.log(JSON.stringify(data, null, 2));
+  console.log(`\n[menuService] Summary:`);
+  console.log(`   Items count: ${data.items?.length || 0}`);
+  console.log(`   Categories count: ${data.categories?.length || 0}`);
+  console.log(`   Menus count: ${data.menus?.length || 0}`);
+  console.log(`   Modifier groups count: ${data.modifier_groups?.length || 0}`);
   return data;
 }
 
