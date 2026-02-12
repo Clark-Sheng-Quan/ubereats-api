@@ -2,12 +2,11 @@
   "name": "uber-eats-backend",
   "version": "1.0.0",
   "description": "Uber Eats Order Webhook Integration - Backend Service",
-  "main": "webhook.js",
+  "main": "app.js",
   "type": "module",
   "scripts": {
-    "start": "node webhook.js",
-    "dev": "NODE_ENV=development node webhook.js",
-    "test-webhook": "node test-webhook.js",
+    "start": "npm run dev",
+    "dev": "NODE_ENV=development node app.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
