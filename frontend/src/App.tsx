@@ -34,7 +34,7 @@ function App() {
         />
 
         <Route
-          path="/menu-sync/:uberStoreId"
+          path="/menu-sync/:shopId/:uberStoreId"
           element={
             <ProtectedRoute>
               <MenuSyncPage />

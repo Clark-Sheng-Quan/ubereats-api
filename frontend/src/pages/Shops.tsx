@@ -67,7 +67,12 @@ export default function ShopsPage() {
       // Load POS shops
       const shopsResponse = await axios.post<ShopsResponse>(
         `${config.POS_API_BASE}/shops`,
-        { token: posToken }
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${posToken}`,
+          },
+        }
       );
       const shopsData: Shop[] = shopsResponse.data.shops || [];
       setShops(shopsData);
@@ -339,7 +344,7 @@ export default function ShopsPage() {
                       <td className="px-6 py-4 text-sm">
                         {shopBinding ? (
                           <button
-                            onClick={() => navigate(`/menu-sync/${shopBinding.uber_store_id}`)}
+                            onClick={() => navigate(`/menu-sync/${shop._id}/${shopBinding.uber_store_id}`)}
                             className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
                           >
                             <UtensilsCrossed size={16} />

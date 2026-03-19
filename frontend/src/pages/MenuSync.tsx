@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getStoreMenu } from "../services/uberService";
+import { getPosProducts } from "../services/posService";
 import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X, Link2 } from "lucide-react";
 
 interface MenuItem {
@@ -89,19 +90,17 @@ interface MenuData {
 type TabType = "mapped" | "unmapped-uber" | "unmapped-vend88";
 
 export default function MenuSyncPage() {
-  const { uberStoreId } = useParams();
+  const { shopId, uberStoreId } = useParams();
   const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<TabType>("mapped");
   const [menuData, setMenuData] = useState<MenuData | null>(null);
+  const [vend88Items, setVend88Items] = useState<Vend88Item[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   
-  // 模拟 Vend88 商品数据（后续替换为API调用）
-  const [vend88Items] = useState<Vend88Item[]>([]);
-
   // 模拟映射数据（后续替换为API调用）
   const [mappings] = useState<Mapping[]>([]);
 
@@ -111,10 +110,10 @@ export default function MenuSyncPage() {
       return;
     }
 
-    loadMenu();
-  }, [uberStoreId, navigate]);
+    loadData();
+  }, [uberStoreId, shopId, navigate]);
 
-  const loadMenu = async () => {
+  const loadData = async () => {
     if (!uberStoreId) return;
 
     try {
@@ -122,9 +121,29 @@ export default function MenuSyncPage() {
       setError("");
       setSuccess("");
 
-      const data = await getStoreMenu(uberStoreId);
-      setMenuData(data);
+      // Load Uber menu
+      const uberMenuData = await getStoreMenu(uberStoreId);
+      setMenuData(uberMenuData);
+
+      // Load Vend88 products if shopId is available
+      if (shopId) {
+        try {
+          const posToken = localStorage.getItem("posToken");
+          if (!posToken) {
+            console.warn("[MenuSync] No POS token found");
+          } else {
+            console.log("[MenuSync] Loading Vend88 products for shop:", shopId);
+            const products = await getPosProducts(posToken, shopId);
+            setVend88Items(products);
+            console.log("[MenuSync] Vend88 products loaded:", products.length);
+          }
+        } catch (vend88Error: any) {
+          console.error("[MenuSync] Failed to load Vend88 products:", vend88Error.message);
+          // Don't show error to user - Vend88 is optional
+        }
+      }
     } catch (err: any) {
+      console.error("[MenuSync] Failed to load Uber menu:", err);
       setError(err.response?.data?.error || err.message || "Failed to load menu");
     } finally {
       setLoading(false);
@@ -139,12 +158,11 @@ export default function MenuSyncPage() {
       setError("");
       setSuccess("");
 
-      const data = await getStoreMenu(uberStoreId);
-      setMenuData(data);
-      setSuccess("Menu refreshed successfully");
+      await loadData();
+      setSuccess("Data refreshed successfully");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
-      setError(err.response?.data?.error || err.message || "Failed to refresh menu");
+      setError(err.response?.data?.error || err.message || "Failed to refresh data");
     } finally {
       setRefreshing(false);
     }
