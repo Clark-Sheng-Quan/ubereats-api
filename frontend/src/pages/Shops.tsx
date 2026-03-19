@@ -230,7 +230,7 @@ export default function ShopsPage() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex justify-between items-center">
+        <div className="px-8 py-4 flex justify-between items-center">
           <h1 className="text-2xl font-bold text-black">Locations</h1>
           <div className="flex gap-3">
             {isUberAuthorized ? (
@@ -266,7 +266,7 @@ export default function ShopsPage() {
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="px-8 py-8">
         {/* Error Alert */}
         {error && (
           <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getStoreMenu, updateMenuItem } from "../services/uberService";
-import { CheckCircle, AlertCircle, RefreshCw, Edit2, X, Save, ArrowLeft } from "lucide-react";
+import { getStoreMenu } from "../services/uberService";
+import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X, Link2 } from "lucide-react";
 
 interface MenuItem {
   id: string;
@@ -11,19 +11,44 @@ interface MenuItem {
   description?: {
     translations?: Record<string, string>;
   };
+  image_url?: string;
   price_info?: {
     price?: number;
+    overrides?: any[];
+  };
+  tax_info?: Record<string, any>;
+  dish_info?: {
+    classifications?: Record<string, any>;
+  };
+  product_info?: {
+    product_traits?: any;
+    countries_of_origin?: any;
   };
   suspension_info?: {
     suspended?: boolean;
   };
-  product_info?: Record<string, any>;
-  classifications?: Record<string, any>;
+  bundled_items?: any;
+}
+
+interface Vend88Item {
+  id: string;
+  name: string;
+  description?: string;
+  price: number;
+  sku?: string;
+}
+
+interface Mapping {
+  id: string;
+  vend88ItemId: string;
+  uberItemId: string;
+  vend88Item?: Vend88Item;
+  uberItem?: MenuItem;
 }
 
 interface MenuEntity {
   id: string;
-  type: "ITEM" | "MODIFIER_GROUP";
+  type?: "ITEM" | "MODIFIER_GROUP";
 }
 
 interface MenuCategory {
@@ -31,38 +56,54 @@ interface MenuCategory {
   title?: {
     translations?: Record<string, string>;
   };
+  subtitle?: {
+    translations?: Record<string, string>;
+  };
   entities?: MenuEntity[];
 }
 
-interface MenuData {
-  menus?: Array<{
-    id: string;
-    name: string;
+interface ServiceAvailability {
+  day_of_week: string;
+  time_periods: Array<{
+    start_time: string;
+    end_time: string;
   }>;
+}
+
+interface MenuMenu {
+  id: string;
+  title?: {
+    translations?: Record<string, string>;
+  };
+  service_availability?: ServiceAvailability[];
+  category_ids?: string[];
+}
+
+interface MenuData {
+  menus?: MenuMenu[];
   categories?: MenuCategory[];
   items?: MenuItem[];
   modifier_groups?: any[];
 }
 
-interface EditingItem {
-  storeId: string;
-  itemId: string;
-  field: string;
-  value: any;
-}
+type TabType = "mapped" | "unmapped-uber" | "unmapped-vend88";
 
 export default function MenuSyncPage() {
   const { uberStoreId } = useParams();
   const navigate = useNavigate();
 
+  const [activeTab, setActiveTab] = useState<TabType>("mapped");
   const [menuData, setMenuData] = useState<MenuData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [editingItem, setEditingItem] = useState<EditingItem | null>(null);
-  const [editValue, setEditValue] = useState("");
-  const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
+  
+  // 模拟 Vend88 商品数据（后续替换为API调用）
+  const [vend88Items] = useState<Vend88Item[]>([]);
+
+  // 模拟映射数据（后续替换为API调用）
+  const [mappings] = useState<Mapping[]>([]);
 
   useEffect(() => {
     if (!uberStoreId) {
@@ -109,55 +150,35 @@ export default function MenuSyncPage() {
     }
   };
 
-  const startEditingItem = (storeId: string, itemId: string, field: string, currentValue: any) => {
-    setEditingItem({ storeId, itemId, field, value: currentValue });
-    setEditValue(String(currentValue));
+  // 获取已映射的 Uber 商品
+  const getMappedUberItems = () => {
+    return menuData?.items?.filter((item) =>
+      mappings.some((m) => m.uberItemId === item.id)
+    ) || [];
   };
 
-  const cancelEditing = () => {
-    setEditingItem(null);
-    setEditValue("");
+  // 获取未映射的 Uber 商品
+  const getUnmappedUberItems = () => {
+    return menuData?.items?.filter((item) =>
+      !mappings.some((m) => m.uberItemId === item.id)
+    ) || [];
   };
 
-  const saveItemUpdate = async () => {
-    if (!editingItem || !uberStoreId) return;
-
-    try {
-      setUpdatingItemId(editingItem.itemId);
-      setError("");
-
-      const updateData: Record<string, any> = {};
-      
-      // 根据字段类型构建更新数据
-      if (editingItem.field === "price") {
-        // Convert dollars to cents (e.g., 10.99 → 1099)
-        const priceInCents = Math.round(parseFloat(editValue) * 100);
-        updateData.price_info = { price: priceInCents };
-      } else if (editingItem.field === "suspended") {
-        updateData.suspension_info = { suspended: editValue === "true" };
-      } else if (editingItem.field === "name") {
-        updateData.product_info = { product_name: editValue };
-      } else if (editingItem.field === "description") {
-        updateData.product_info = { product_description: editValue };
-      } else {
-        updateData[editingItem.field] = editValue;
-      }
-
-      await updateMenuItem(uberStoreId, editingItem.itemId, updateData);
-
-      // 更新本地状态
-      setSuccess(`Item updated successfully`);
-      setTimeout(() => setSuccess(""), 3000);
-      
-      // 重新加载菜单
-      await loadMenu();
-      setEditingItem(null);
-    } catch (err: any) {
-      setError(err.response?.data?.error || err.message || "Failed to update item");
-    } finally {
-      setUpdatingItemId(null);
-    }
+  // 获取已映射的 Vend88 商品
+  const getMappedVend88Items = () => {
+    return vend88Items.filter((item) =>
+      mappings.some((m) => m.vend88ItemId === item.id)
+    );
   };
+
+  // 获取未映射的 Vend88 商品
+  const getUnmappedVend88Items = () => {
+    return vend88Items.filter((item) =>
+      !mappings.some((m) => m.vend88ItemId === item.id)
+    );
+  };
+
+
 
   if (loading) {
     return (
@@ -175,41 +196,25 @@ export default function MenuSyncPage() {
     if (!textObj) return "—";
     if (typeof textObj === "string") return textObj;
     if (textObj.translations) {
-      // Try en_us first, then en, then first available
       return textObj.translations["en_us"] || textObj.translations["en"] || Object.values(textObj.translations)[0] || "—";
     }
     return "—";
   };
 
-  // Build categories with their items
-  const categories = (menuData?.categories || []).map((category) => {
-    const categoryItems = (category.entities || [])
-      .map((entity) => {
-        const item = menuData?.items?.find((i) => i.id === entity.id);
-        return item
-          ? {
-              ...item,
-              name: getText(item.title),
-              description: getText(item.description),
-            }
-          : null;
-      })
-      .filter(Boolean) as any[];
-
-    return {
-      id: category.id,
-      name: getText(category.title),
-      items: categoryItems,
-    };
-  });
-
-  const totalItems = categories.reduce((sum, cat) => sum + (cat.items?.length || 0), 0);
+  // Helper function to get category name for an item
+  const getCategoryName = (): string => {
+    // 从menuData中获取第一个category的subtitle
+    if (menuData?.categories && menuData.categories.length > 0) {
+      return getText(menuData.categories[0].subtitle) || "—";
+    }
+    return "—";
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <div className="bg-white border-b border-gray-200 sticky top-0 z-10">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="px-8 py-4 flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
               onClick={() => navigate("/shops")}
@@ -218,9 +223,9 @@ export default function MenuSyncPage() {
               <ArrowLeft className="w-6 h-6" />
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-black">Uber Menu</h1>
+              <h1 className="text-2xl font-bold text-black">Uber Menu Mapping</h1>
               <p className="text-sm text-gray-600 mt-1">
-                {totalItems} items across {categories.length} categories
+                Mapped: {getMappedUberItems().length} | Uber: {getUnmappedUberItems().length} | Vend88: {getUnmappedVend88Items().length}
               </p>
             </div>
           </div>
@@ -230,12 +235,48 @@ export default function MenuSyncPage() {
             className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded font-semibold hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "Refreshing..." : "Refresh Menu"}
+            {refreshing ? "Refreshing..." : "Refresh"}
           </button>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      {/* Tab Navigation */}
+      <div className="bg-white border-b border-gray-200 px-8">
+        <div className="flex gap-0">
+          <button
+            onClick={() => setActiveTab("mapped")}
+            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === "mapped"
+                ? "border-black text-black"
+                : "border-transparent text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            Mapped ({getMappedUberItems().length})
+          </button>
+          <button
+            onClick={() => setActiveTab("unmapped-uber")}
+            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === "unmapped-uber"
+                ? "border-black text-black"
+                : "border-transparent text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            Uber Items ({getUnmappedUberItems().length})
+          </button>
+          <button
+            onClick={() => setActiveTab("unmapped-vend88")}
+            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+              activeTab === "unmapped-vend88"
+                ? "border-black text-black"
+                : "border-transparent text-gray-600 hover:text-gray-900"
+            }`}
+          >
+            Vend88 Items ({getUnmappedVend88Items().length})
+          </button>
+        </div>
+      </div>
+
+      <div className="px-8 py-8">
         {/* Error Alert */}
         {error && (
           <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
@@ -261,116 +302,201 @@ export default function MenuSyncPage() {
           </div>
         )}
 
-        {/* Menu Categories */}
-        {categories.length > 0 ? (
-          <div className="space-y-8">
-            {categories.map((category) => (
-              <div key={category.id}>
-                <h2 className="text-xl font-bold text-black mb-4">{category.name}</h2>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {category.items?.map((item) => (
-                    <div
-                      key={item.id}
-                      className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow"
-                    >
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex-1">
-                          {editingItem && editingItem.itemId === item.id && editingItem.field === "name" ? (
-                            <input
-                              type="text"
-                              value={editValue}
-                              onChange={(e) => setEditValue(e.target.value)}
-                              className="w-full px-2 py-1 border border-gray-300 rounded text-sm font-bold text-black"
-                              disabled={updatingItemId === item.id}
-                            />
-                          ) : (
-                            <h3 className="font-bold text-black">{item.name}</h3>
+        {/* Tab Content */}
+        {activeTab === "mapped" && (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            {getMappedVend88Items().length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Vend88 Item</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-28">Vend88 ID</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Uber Item</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-28">Uber ID</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-24">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {mappings.map((mapping) => (
+                      <tr key={mapping.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-3 flex-1 min-w-48">
+                          <p className="text-sm font-semibold text-gray-900">{mapping.vend88Item?.name || "—"}</p>
+                          {mapping.vend88Item?.sku && (
+                            <p className="text-xs text-gray-600">SKU: {mapping.vend88Item.sku}</p>
                           )}
-                        </div>
-                        <span
-                          className={`text-xs font-semibold px-3 py-1 rounded-full flex-shrink-0 ml-2 ${
-                            item.suspension_info?.suspended
-                              ? "bg-red-100 text-red-700"
-                              : "bg-green-100 text-green-700"
-                          }`}
-                        >
-                          {item.suspension_info?.suspended ? "Suspended" : "Active"}
-                        </span>
-                      </div>
-
-                      {/* Description */}
-                      {item.description && (
-                        <p className="text-sm text-gray-600 mb-3">{item.description}</p>
-                      )}
-
-                      {/* Item ID */}
-                      <p className="text-xs text-gray-500 mb-4">ID: {item.id}</p>
-
-                      {/* Price and Actions */}
-                      <div className="flex items-center justify-between pt-4 border-t border-gray-100">
-                        <div className="flex items-center gap-4">
-                          <div>
-                            <p className="text-xs text-gray-600">Price</p>
-                            {editingItem && editingItem.itemId === item.id && editingItem.field === "price" ? (
-                              <input
-                                type="number"
-                                value={editValue}
-                                onChange={(e) => setEditValue(e.target.value)}
-                                step="0.01"
-                                className="w-20 px-2 py-1 border border-gray-300 rounded text-sm font-bold text-black"
-                                disabled={updatingItemId === item.id}
-                              />
-                            ) : (
-                              <p className="font-bold text-black">
-                                ${((item.price_info?.price || 0) / 100).toFixed(2)}
-                              </p>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Edit/Save/Cancel Buttons */}
-                        {editingItem?.itemId === item.id ? (
-                          <div className="flex gap-2">
-                            <button
-                              onClick={saveItemUpdate}
-                              disabled={updatingItemId === item.id}
-                              className="flex items-center gap-1 bg-green-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-green-700 disabled:opacity-50"
-                            >
-                              <Save className="w-4 h-4" />
-                              Save
-                            </button>
-                            <button
-                              onClick={cancelEditing}
-                              disabled={updatingItemId === item.id}
-                              className="flex items-center gap-1 bg-gray-300 text-black px-3 py-1 rounded text-sm font-semibold hover:bg-gray-400 disabled:opacity-50"
-                            >
-                              <X className="w-4 h-4" />
-                              Cancel
-                            </button>
-                          </div>
-                        ) : (
+                        </td>
+                        <td className="px-6 py-3 w-28">
+                          <span className="text-xs text-gray-900 font-mono bg-gray-100 px-2 py-1 rounded whitespace-nowrap">
+                            {mapping.vend88ItemId.slice(0, 12)}...
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 flex-1 min-w-48">
+                          <p className="text-sm font-semibold text-gray-900">
+                            {getText(mapping.uberItem?.title) || "—"}
+                          </p>
+                          {mapping.uberItem?.price_info && (
+                            <p className="text-xs text-gray-600">
+                              ${((mapping.uberItem.price_info.price || 0) / 100).toFixed(2)}
+                            </p>
+                          )}
+                        </td>
+                        <td className="px-6 py-3 w-28">
+                          <span className="text-xs text-gray-900 font-mono bg-gray-100 px-2 py-1 rounded whitespace-nowrap">
+                            {mapping.uberItemId.slice(0, 12)}...
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 w-24">
                           <button
-                            onClick={() => startEditingItem(uberStoreId || "", item.id, "price", ((item.price_info?.price || 0) / 100).toFixed(2))}
-                            className="flex items-center gap-1 bg-blue-600 text-white px-3 py-1 rounded text-sm font-semibold hover:bg-blue-700"
+                            onClick={() => {
+                              // TODO: Implement delete mapping
+                              setError("Delete mapping coming soon");
+                            }}
+                            className="flex items-center gap-1 text-red-600 hover:text-red-700 font-semibold text-xs hover:bg-red-50 px-2 py-1 rounded transition-colors"
                           >
-                            <Edit2 className="w-4 h-4" />
-                            Edit
+                            Delete
                           </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            ))}
+            ) : (
+              <div className="px-6 py-12 text-center">
+                <p className="text-gray-600 font-semibold">No mapped items yet</p>
+                <p className="text-sm text-gray-500 mt-1">Map Vend88 items to Uber items to see them here</p>
+              </div>
+            )}
           </div>
-        ) : (
-          <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
-            <AlertCircle className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 font-semibold">No menu items found</p>
-            <p className="text-sm text-gray-500 mt-2">
-              Your Uber store menu is empty. Contact Uber support to add menu items.
-            </p>
+        )}
+
+        {activeTab === "unmapped-uber" && (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            {getUnmappedUberItems().length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-40">Category</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-28">Item ID</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Item Name</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Price</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-24">Status</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-24">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {getUnmappedUberItems().map((item) => (
+                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-3 w-40 text-sm">
+                          <span className="bg-gray-100 px-3 py-1 rounded text-xs font-medium inline-block">
+                            {getCategoryName()}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 w-28 text-xs text-gray-900 font-mono">
+                          {item.id.slice(0, 16)}...
+                        </td>
+                        <td className="px-6 py-3 flex-1 min-w-48">
+                          <p className="text-sm font-semibold text-gray-900">{getText(item.title)}</p>
+                        </td>
+                        <td className="px-6 py-3 w-20 text-sm font-bold text-gray-900">
+                          ${((item.price_info?.price || 0) / 100).toFixed(2)}
+                        </td>
+                        <td className="px-6 py-3 w-24">
+                          <span
+                            className={`px-2 py-1 rounded-full text-xs font-semibold inline-block ${
+                              item.suspension_info?.suspended
+                                ? "bg-red-100 text-red-700"
+                                : "bg-green-100 text-green-700"
+                            }`}
+                          >
+                            {item.suspension_info?.suspended ? "Suspended" : "Active"}
+                          </span>
+                        </td>
+                        <td className="px-6 py-3 w-24 text-center">
+                          <button
+                            onClick={() => {
+                              // TODO: Open mapping modal with this Uber item
+                              setError("Mapping modal coming soon");
+                            }}
+                            className="flex items-center justify-center gap-1 text-blue-600 hover:text-blue-700 font-semibold text-xs hover:bg-blue-50 px-2 py-1 rounded transition-colors w-full"
+                          >
+                            <Link2 className="w-3 h-3" />
+                            Map
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="px-6 py-12 text-center">
+                <p className="text-gray-600 font-semibold">All Uber items are mapped!</p>
+                <p className="text-sm text-gray-500 mt-1">Great job keeping your inventory synced</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "unmapped-vend88" && (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            {getUnmappedVend88Items().length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Item Name</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-28">SKU</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Price</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-24">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {getUnmappedVend88Items().map((item) => (
+                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-6 py-3 flex-1 min-w-48">
+                          <p className="text-sm font-semibold text-gray-900">{item.name}</p>
+                          {item.description && (
+                            <p className="text-xs text-gray-600">{item.description.slice(0, 60)}...</p>
+                          )}
+                        </td>
+                        <td className="px-6 py-3 w-28 text-xs text-gray-900 font-mono bg-gray-100 px-2 py-1 rounded">
+                          {item.sku || "—"}
+                        </td>
+                        <td className="px-6 py-3 w-20 text-sm font-bold text-gray-900">
+                          ${(item.price / 100).toFixed(2)}
+                        </td>
+                        <td className="px-6 py-3 w-24 text-center">
+                          <button
+                            onClick={() => {
+                              // TODO: Open mapping modal with this Vend88 item
+                              setError("Mapping modal coming soon");
+                            }}
+                            className="flex items-center justify-center gap-1 text-blue-600 hover:text-blue-700 font-semibold text-xs hover:bg-blue-50 px-2 py-1 rounded transition-colors w-full"
+                          >
+                            Map
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="px-6 py-12 text-center">
+                <p className="text-gray-600 font-semibold">All Vend88 items are mapped!</p>
+                <p className="text-sm text-gray-500 mt-1">Your POS inventory is fully synced to Uber</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Old Items List - Disabled for Tab Navigation */}
+        {false && (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden p-12 text-center">
+            <p className="text-gray-500">Old table view</p>
           </div>
         )}
       </div>

@@ -2,6 +2,20 @@
 
 A comprehensive backend service for receiving and managing Uber Eats orders through webhooks, with an integrated POS terminal for order operations.
 
+
+# Terminal 1 - 后端
+cd backend && npm run dev
+
+# Terminal 2 - 前端
+cd frontend && npm run dev
+
+# Terminal 3 - ngrok
+ngrok http 3000
+
+
+
+
+
 ## Project Structure
 
 ```

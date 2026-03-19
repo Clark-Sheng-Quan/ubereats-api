@@ -4,8 +4,11 @@
  */
 import express from "express";
 import axios from "axios";
+import { verifyTokenMiddleware } from "../services/tokenService.js";
+
 const router = express.Router();
 const POS_API_BASE = "https://dev.vend88.com";
+
 /**
  * POST /api/service/pos/login - User login
  * Body: { email, password }
@@ -34,136 +37,272 @@ router.post("/login", async (req, res) => {
         });
     }
 });
-/**
- * POST /api/service/pos/shops - Get user's shops
- * Body: { token }
- */
+
+// Apply token verification middleware to all routes EXCEPT login
+router.use(verifyTokenMiddleware());
 router.post("/shops", async (req, res) => {
-    try {
-        const { token } = req.body;
-        if (!token) {
-            return res.status(400).json({
-                status_code: 400,
-                message: "Token is required",
-            });
-        }
-        // console.log("Received token:", token);
-        const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
-            token,
-        });
-        // console.log("POS API response:", response.data);
-        res.json(response.data);
-    }
-    catch (error) {
-        console.error("Get shops error:", error.message);
-        console.error("POS API error response:", error.response?.data);
-        res.status(error.response?.status || 500).json({
-            status_code: error.response?.status || 500,
-            message: error.response?.data?.message || "Failed to fetch shops",
-        });
-    }
+  try {
+    const token = req.token;
+    console.log('[PosService] Fetching shops for user');
+
+    const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
+      token,
+    });
+
+    res.json({
+      status_code: 200,
+      success: true,
+      data: response.data
+    });
+  } catch (error) {
+    console.error('[PosService] Get shops error:', error.message);
+    console.error('[PosService] POS API error response:', error.response?.data);
+    res.status(error.response?.status || 500).json({
+      status_code: error.response?.status || 500,
+      success: false,
+      message: error.response?.data?.message || "Failed to fetch shops",
+    });
+  }
 });
+
 /**
  * POST /api/service/pos/shop/:shopId - Get shop details from shops list
- * Body: { token }
+ * Params: { shopId }
+ * Body: {} + Token from Authorization header or body.token
  * Note: POS API doesn't have a dedicated get_shop endpoint,
  * so we fetch the full shops list and filter by ID
  */
 router.post("/shop/:shopId", async (req, res) => {
   try {
     const { shopId } = req.params;
-    const { token } = req.body;
+    const token = req.token;
 
-    if (!token || !shopId) {
+    if (!shopId) {
       return res.status(400).json({
         status_code: 400,
-        message: "Token and shop ID are required",
+        success: false,
+        message: "Shop ID is required",
       });
     }
 
-    console.log("[posServiceRoutes] Getting shop details for:", shopId);
+    console.log('[PosService] Getting shop details for:', shopId);
 
     // Call list_shop to get all shops and filter for the requested one
     const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
       token,
     });
 
-    console.log("[posServiceRoutes] Got shops list, filtering for ID:", shopId);
+    console.log('[PosService] Got shops list, filtering for ID:', shopId);
 
-    const allShops = response.data.shops || [];
+    const allShops = response.data?.shops || [];
     const shop = allShops.find((s) => s._id === shopId);
 
     if (!shop) {
       return res.status(404).json({
         status_code: 404,
+        success: false,
         message: `Shop with ID ${shopId} not found`,
       });
     }
 
-    // Return just the shop object (not the full list response)
-    res.json(shop);
+    // Return just the shop object with success indicator
+    res.json({
+      status_code: 200,
+      success: true,
+      data: shop
+    });
   } catch (error) {
-    console.error("[posServiceRoutes] Get shop detail error:", error.message);
+    console.error('[PosService] Get shop detail error:', error.message);
     res.status(error.response?.status || 500).json({
       status_code: error.response?.status || 500,
+      success: false,
       message: error.response?.data?.message || "Failed to fetch shop details",
     });
   }
 });
 /**
- * POST /api/service/pos/products - Get shop products
- * Body: { token, shop_id, page_idx, page_size }
+ * GET /api/service/pos/search-products
+ * Search products from POS system
+ * Authorization: Bearer {token} OR Query: { business_id, page_size, page_idx }
  */
-router.post("/products", async (req, res) => {
-    try {
-        const { token, shop_id, page_idx = 1, page_size = 500 } = req.body;
-        if (!token || !shop_id) {
-            return res.status(400).json({
-                status_code: 400,
-                message: "Token and shop ID are required",
-            });
-        }
-        const response = await axios.post(`${POS_API_BASE}/product/list`, {
-            token,
-            shop_id,
-            page_idx,
-            page_size,
-        });
-        res.json(response.data);
+router.get('/search-products', async (req, res) => {
+  try {
+    const token = req.token;
+    const { business_id, page_size = '20', page_idx = '0' } = req.query;
+    const pageSize = parseInt(page_size);
+    const pageIdx = parseInt(page_idx);
+
+    if (!business_id) {
+      return res.status(400).json({
+        status_code: 400,
+        success: false,
+        message: 'Business ID is required'
+      });
     }
-    catch (error) {
-        console.error("Get products error:", error.message);
-        res.status(error.response?.status || 500).json({
-            status_code: error.response?.status || 500,
-            message: error.response?.data?.message || "Failed to fetch products",
-        });
-    }
+
+    console.log('[PosService] Searching products - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
+
+    const client = axios.create({
+      baseURL: POS_API_BASE,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    // Call /search/product_search with business_id and pagination
+    const response = await client.post('/search/product_search', {
+      query: {
+        business_id: business_id
+      },
+      page_size: pageSize,
+      page_idx: pageIdx,
+      detail: true
+    });
+
+    console.log('[PosService] Products searched successfully');
+
+    res.json({
+      status_code: 200,
+      success: true,
+      data: response.data
+    });
+  } catch (error) {
+    console.error('[PosService] Search products error:', error.message);
+
+    res.status(error.response?.status || 500).json({
+      status_code: error.response?.status || 500,
+      success: false,
+      message: error.response?.data?.message || 'Failed to search products',
+      error: error.message
+    });
+  }
 });
+
+/**
+ * GET /api/service/pos/products
+ * Get all products for a shop/business
+ * Query: { business_id, page_size, page_idx }
+ * Authorization: Bearer {token} OR body.token
+ */
+router.get('/products', async (req, res) => {
+  try {
+    const token = req.token;
+    const { business_id, page_size = '50', page_idx = '0' } = req.query;
+    const pageSize = parseInt(page_size);
+    const pageIdx = parseInt(page_idx);
+
+    if (!business_id) {
+      return res.status(400).json({
+        status_code: 400,
+        success: false,
+        message: 'Business ID is required'
+      });
+    }
+
+    console.log('[PosService] Fetching products - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
+
+    const client = axios.create({
+      baseURL: POS_API_BASE,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    // Call /search/product_search to get full product list
+    const response = await client.post('/search/product_search', {
+      query: {
+        business_id: business_id
+      },
+      page_size: pageSize,
+      page_idx: pageIdx,
+      detail: true
+    });
+
+    console.log('[PosService] Products fetched successfully');
+
+    // Extract and format product data
+    const products = (response.data?.data?.products || []).map(product => ({
+      id: product.product_id,
+      name: product.name,
+      description: product.description,
+      price: product.price,
+      sku: product.barcode,
+      category_id: product.category_id,
+      image_url: product.image_url,
+      status: product.status
+    }));
+
+    res.json({
+      status_code: 200,
+      success: true,
+      data: {
+        products: products,
+        total: response.data?.data?.total_count,
+        page_idx: pageIdx,
+        page_size: pageSize
+      }
+    });
+  } catch (error) {
+    console.error('[PosService] Fetch products error:', error.message);
+
+    res.status(error.response?.status || 500).json({
+      status_code: error.response?.status || 500,
+      success: false,
+      message: error.response?.data?.message || 'Failed to fetch products',
+      error: error.message
+    });
+  }
+});
+
 /**
  * POST /api/service/pos/categories - Get product categories
- * Body: { token, shop_id }
+ * Body: { shop_id } + Token from Authorization header or body.token
  */
 router.post("/categories", async (req, res) => {
-    try {
-        const { token, shop_id } = req.body;
-        if (!token || !shop_id) {
-            return res.status(400).json({
-                status_code: 400,
-                message: "Token and shop ID are required",
-            });
-        }
-        const response = await axios.post(`${POS_API_BASE}/category/list`, {
-            token,
-            shop_id,
-        });
-        res.json(response.data);
+  try {
+    const token = req.token;
+    const { shop_id } = req.body;
+
+    if (!shop_id) {
+      return res.status(400).json({
+        status_code: 400,
+        success: false,
+        message: "Shop ID is required",
+      });
     }
-    catch (error) {
-        console.error("Get categories error:", error.message);
-        res.status(error.response?.status || 500).json({
-            status_code: error.response?.status || 500,
-            message: error.response?.data?.message || "Failed to fetch categories",
-        });
-    }
+
+    console.log('[PosService] Fetching categories for shop:', shop_id);
+
+    const client = axios.create({
+      baseURL: POS_API_BASE,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    const response = await client.post(`/category/list`, {
+      token,
+      shop_id,
+    });
+
+    res.json({
+      status_code: 200,
+      success: true,
+      data: response.data
+    });
+  } catch (error) {
+    console.error("[PosService] Get categories error:", error.message);
+    res.status(error.response?.status || 500).json({
+      status_code: error.response?.status || 500,
+      success: false,
+      message: error.response?.data?.message || "Failed to fetch categories",
+    });
+  }
 });
 export default router;
