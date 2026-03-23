@@ -222,18 +222,19 @@ router.get('/products', async (req, res) => {
       detail: true
     });
 
-    console.log('[PosService] Products fetched successfully');
+    // Extract products from response - they are at top level of response.data
+    const rawProducts = response.data?.products || [];
 
-    // Extract and format product data
-    const products = (response.data?.data?.products || []).map(product => ({
-      id: product.product_id,
+    // Extract and format product data - map POS fields to our schema
+    const products = rawProducts.map(product => ({
+      _id: product._id || product.product_id,
       name: product.name,
-      description: product.description,
       price: product.price,
-      sku: product.barcode,
-      category_id: product.category_id,
-      image_url: product.image_url,
-      status: product.status
+      sku: product.sku,
+      category: Array.isArray(product.category) ? product.category[0] : product.category,
+      active: product.active || true,
+      image_url: Array.isArray(product.image_urls) ? product.image_urls[0] : product.image_urls,
+      options: product.options || []
     }));
 
     res.json({
@@ -241,7 +242,7 @@ router.get('/products', async (req, res) => {
       success: true,
       data: {
         products: products,
-        total: response.data?.data?.total_count,
+        max_page: response.data?.max_page,
         page_idx: pageIdx,
         page_size: pageSize
       }

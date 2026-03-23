@@ -10,6 +10,7 @@ interface Shop {
   _id: string;
   name: string;
   shop_key: string;
+  business_id: string;
   description?: string;
 }
 
@@ -19,7 +20,14 @@ interface UberStore {
 }
 
 interface ShopsResponse {
-  shops: Shop[];
+  status_code: number;
+  success: boolean;
+  data: {
+    data?: {
+      shops: Shop[];
+    };
+    shops?: Shop[];
+  };
 }
 
 interface StoresResponse {
@@ -74,7 +82,9 @@ export default function ShopsPage() {
           },
         }
       );
-      const shopsData: Shop[] = shopsResponse.data.shops || [];
+      // Handle nested data structure from POS API
+      const shopsData: Shop[] = shopsResponse.data.data?.shops || [];
+      console.log('[Shops] Loaded shops:', shopsData);
       setShops(shopsData);
 
       let storesData: UberStore[] = [];
@@ -344,7 +354,10 @@ export default function ShopsPage() {
                       <td className="px-6 py-4 text-sm">
                         {shopBinding ? (
                           <button
-                            onClick={() => navigate(`/menu-sync/${shop._id}/${shopBinding.uber_store_id}`)}
+                            onClick={() => {
+                              
+                              navigate(`/menu-sync/${shop.business_id}/${shopBinding.uber_store_id}`);
+                            }}
                             className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
                           >
                             <UtensilsCrossed size={16} />

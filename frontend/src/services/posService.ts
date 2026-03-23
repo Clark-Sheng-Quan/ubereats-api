@@ -10,40 +10,46 @@ const backendApi = axios.create({
 
 // Type definitions for Vend88 products
 interface Vend88Item {
-  id: string;
+  _id: string;
   name: string;
-  description?: string;
   price: number; // in cents
   sku?: string;
-  category_id?: string;
+  category?: string;
+  active?: boolean;
   image_url?: string;
-  status?: string;
+  options?: any[];
 }
 
 interface ProductsResponse {
   status_code: number;
   success: boolean;
   data: {
+    message: string;
     products: Vend88Item[];
-    total?: number;
+    max_page?: number;
     page_idx: number;
     page_size: number;
   };
 }
 
+interface PosProductsResponse {
+  products: Vend88Item[];
+  max_page: number;
+}
+
 /**
- * Fetch Vend88 products from POS system
+ * Fetch Vend88 products from POS system for a specific page
  * @param token - POS API token (will be sent in Authorization header)
  * @param businessId - Business/Shop ID
- * @param pageSize - Items per page (default: 50)
+ * @param pageSize - Items per page (default: 15)
  * @param pageIdx - Page index (default: 0)
  */
 export async function getPosProducts(
   token: string,
   businessId: string,
-  pageSize: number = 50,
+  pageSize: number = 15,
   pageIdx: number = 0
-): Promise<Vend88Item[]> {
+): Promise<PosProductsResponse> {
   try {
     if (!token) {
       throw new Error("Token is required");
@@ -53,7 +59,7 @@ export async function getPosProducts(
       throw new Error("Business ID is required");
     }
 
-    console.log("[PosService] Fetching products for business:", businessId);
+    console.log(`[PosService] Fetching products for business ${businessId}, page ${pageIdx}, size ${pageSize}`);
 
     const response = await backendApi.get<ProductsResponse>(
       "/service/pos/products",
@@ -73,13 +79,16 @@ export async function getPosProducts(
       throw new Error(response.data.data?.message || "Failed to fetch products");
     }
 
-    console.log("[PosService] Products fetched successfully:", response.data.data.products.length);
+    const products = response.data.data.products || [];
+    const maxPage = response.data.data?.max_page || 1;
+    console.log(`[PosService] Fetched page ${pageIdx}: ${products.length} products, max_page: ${maxPage}`);
 
-    return response.data.data.products;
+    return { products, max_page: maxPage };
   } catch (error: any) {
     console.error("[PosService] Get products error:", {
       status: error.response?.status,
       message: error.response?.data?.message || error.message,
+      fullError: error.response?.data,
     });
 
     // Handle specific error types
@@ -93,6 +102,59 @@ export async function getPosProducts(
   }
 }
 
+/**
+ * Get total count of products using pagesize=1 to quickly retrieve max_page
+ * @param token - POS API token
+ * @param businessId - Business/Shop ID
+ */
+export async function getPosProductsCount(
+  token: string,
+  businessId: string
+): Promise<number> {
+  try {
+    if (!token) {
+      throw new Error("Token is required");
+    }
+
+    if (!businessId) {
+      throw new Error("Business ID is required");
+    }
+
+    console.log(`[PosService] Fetching product count for business ${businessId}`);
+
+    const response = await backendApi.get<ProductsResponse>(
+      "/service/pos/products",
+      {
+        params: {
+          business_id: businessId,
+          page_size: 1,
+          page_idx: 0,
+        },
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      }
+    );
+
+    if (!response.data.success) {
+      throw new Error(response.data.data?.message || "Failed to fetch product count");
+    }
+
+    const totalCount = response.data.data?.max_page || 0;
+    console.log(`[PosService] Total product count: ${totalCount}`);
+
+    return totalCount;
+  } catch (error: any) {
+    console.error("[PosService] Get product count error:", {
+      status: error.response?.status,
+      message: error.response?.data?.message || error.message,
+    });
+
+    return 0;
+  }
+}
+
 export default {
   getPosProducts,
+  getPosProductsCount,
 };

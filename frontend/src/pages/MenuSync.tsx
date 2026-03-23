@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getStoreMenu } from "../services/uberService";
-import { getPosProducts } from "../services/posService";
-import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X, Link2 } from "lucide-react";
+import { getPosProducts, getPosProductsCount } from "../services/posService";
+import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X } from "lucide-react";
 
 interface MenuItem {
   id: string;
@@ -32,11 +32,16 @@ interface MenuItem {
 }
 
 interface Vend88Item {
-  id: string;
+  _id: string;
+  id?: string;
   name: string;
   description?: string;
   price: number;
   sku?: string;
+  category?: string | string[];
+  active?: boolean;
+  image_url?: string;
+  options?: any[];
 }
 
 interface Mapping {
@@ -90,16 +95,21 @@ interface MenuData {
 type TabType = "mapped" | "unmapped-uber" | "unmapped-vend88";
 
 export default function MenuSyncPage() {
-  const { shopId, uberStoreId } = useParams();
+  const { businessId, uberStoreId } = useParams();
   const navigate = useNavigate();
 
   const [activeTab, setActiveTab] = useState<TabType>("mapped");
   const [menuData, setMenuData] = useState<MenuData | null>(null);
   const [vend88Items, setVend88Items] = useState<Vend88Item[]>([]);
+  const [vend88CurrentPage, setVend88CurrentPage] = useState(0); // 0-based indexing
+  const [vend88MaxPage, setVend88MaxPage] = useState(0);
+  const [vend88TotalCount, setVend88TotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [uberCurrentPage, setUberCurrentPage] = useState(1);
+  const itemsPerPage = 15;
   
   // 模拟映射数据（后续替换为API调用）
   const [mappings] = useState<Mapping[]>([]);
@@ -111,7 +121,43 @@ export default function MenuSyncPage() {
     }
 
     loadData();
-  }, [uberStoreId, shopId, navigate]);
+  }, [uberStoreId, businessId, navigate]);
+
+  // Load Vend88 products with pagination
+  const loadVend88Products = async (pageIdx: number = 0) => {
+    try {
+      const posToken = localStorage.getItem("posToken");
+      if (!posToken) {
+        console.warn("[MenuSync] No POS token found");
+        return;
+      }
+
+      if (!businessId) {
+        console.warn("[MenuSync] No business ID");
+        return;
+      }
+
+      console.log(`[MenuSync] Loading Vend88 products - page ${pageIdx}, size ${itemsPerPage}`);
+
+      const response = await getPosProducts(posToken, businessId, itemsPerPage, pageIdx);
+      const products = response.products || [];
+      const maxPage = response.max_page || 0;
+
+      setVend88Items(products);
+      setVend88CurrentPage(pageIdx);
+      setVend88MaxPage(maxPage);
+
+      console.log(`[MenuSync] Vend88 loaded: ${products.length} products, max_page: ${maxPage}`);
+    } catch (err: any) {
+      console.error("[MenuSync] Failed to load Vend88 products:", err.message);
+    }
+  };
+
+  // Load Vend88 products when page changes
+  useEffect(() => {
+    if (!businessId) return;
+    loadVend88Products(vend88CurrentPage);
+  }, [vend88CurrentPage, businessId]);
 
   const loadData = async () => {
     if (!uberStoreId) return;
@@ -125,22 +171,24 @@ export default function MenuSyncPage() {
       const uberMenuData = await getStoreMenu(uberStoreId);
       setMenuData(uberMenuData);
 
-      // Load Vend88 products if shopId is available
-      if (shopId) {
+      // Load Vend88 products if businessId is available
+      if (businessId) {
         try {
           const posToken = localStorage.getItem("posToken");
           if (!posToken) {
             console.warn("[MenuSync] No POS token found");
           } else {
-            console.log("[MenuSync] Loading Vend88 products for shop:", shopId);
-            const products = await getPosProducts(posToken, shopId);
-            setVend88Items(products);
-            console.log("[MenuSync] Vend88 products loaded:", products.length);
+            // Get total count first
+            const totalCount = await getPosProductsCount(posToken, businessId);
+            setVend88TotalCount(totalCount);
+            console.log("[MenuSync] Vend88 total count:", totalCount);
           }
-        } catch (vend88Error: any) {
-          console.error("[MenuSync] Failed to load Vend88 products:", vend88Error.message);
-          // Don't show error to user - Vend88 is optional
+        } catch (err: any) {
+          console.error("[MenuSync] Failed to get Vend88 product count:", err.message);
         }
+        
+        // Then load first page
+        await loadVend88Products(0);
       }
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Uber menu:", err);
@@ -185,18 +233,31 @@ export default function MenuSyncPage() {
   // 获取已映射的 Vend88 商品
   const getMappedVend88Items = () => {
     return vend88Items.filter((item) =>
-      mappings.some((m) => m.vend88ItemId === item.id)
+      mappings.some((m) => m.vend88ItemId === item._id)
     );
   };
 
   // 获取未映射的 Vend88 商品
   const getUnmappedVend88Items = () => {
     return vend88Items.filter((item) =>
-      !mappings.some((m) => m.vend88ItemId === item.id)
+      !mappings.some((m) => m.vend88ItemId === item._id)
     );
   };
 
+  // Pagination helper functions
+  const getPaginatedUberItems = () => {
+    const items = getUnmappedUberItems();
+    const startIndex = (uberCurrentPage - 1) * itemsPerPage;
+    return items.slice(startIndex, startIndex + itemsPerPage);
+  };
 
+  const getPaginatedVend88Items = () => {
+    // vend88Items已经只是一页的数据，直接返回未映射的项
+    return getUnmappedVend88Items();
+  };
+
+  const getUberTotalPages = () => Math.ceil(getUnmappedUberItems().length / itemsPerPage);
+  const getVend88TotalPages = () => Math.ceil(getUnmappedVend88Items().length / itemsPerPage);
 
   if (loading) {
     return (
@@ -289,7 +350,7 @@ export default function MenuSyncPage() {
                 : "border-transparent text-gray-600 hover:text-gray-900"
             }`}
           >
-            Vend88 Items ({getUnmappedVend88Items().length})
+            Vend88 Items ({vend88TotalCount > 0 ? vend88TotalCount + 1 : 0})
           </button>
         </div>
       </div>
@@ -345,7 +406,7 @@ export default function MenuSyncPage() {
                           )}
                         </td>
                         <td className="px-6 py-3 w-28">
-                          <span className="text-xs text-gray-900 font-mono bg-gray-100 px-2 py-1 rounded whitespace-nowrap">
+                          <span className="text-xs text-gray-900 font-mono whitespace-nowrap">
                             {mapping.vend88ItemId.slice(0, 12)}...
                           </span>
                         </td>
@@ -360,7 +421,7 @@ export default function MenuSyncPage() {
                           )}
                         </td>
                         <td className="px-6 py-3 w-28">
-                          <span className="text-xs text-gray-900 font-mono bg-gray-100 px-2 py-1 rounded whitespace-nowrap">
+                          <span className="text-xs text-gray-900 font-mono whitespace-nowrap">
                             {mapping.uberItemId.slice(0, 12)}...
                           </span>
                         </td>
@@ -392,63 +453,94 @@ export default function MenuSyncPage() {
         {activeTab === "unmapped-uber" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             {getUnmappedUberItems().length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-40">Category</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-28">Item ID</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Item Name</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Price</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-24">Status</th>
-                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-24">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {getUnmappedUberItems().map((item) => (
-                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-6 py-3 w-40 text-sm">
-                          <span className="bg-gray-100 px-3 py-1 rounded text-xs font-medium inline-block">
-                            {getCategoryName()}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3 w-28 text-xs text-gray-900 font-mono">
-                          {item.id.slice(0, 16)}...
-                        </td>
-                        <td className="px-6 py-3 flex-1 min-w-48">
-                          <p className="text-sm font-semibold text-gray-900">{getText(item.title)}</p>
-                        </td>
-                        <td className="px-6 py-3 w-20 text-sm font-bold text-gray-900">
-                          ${((item.price_info?.price || 0) / 100).toFixed(2)}
-                        </td>
-                        <td className="px-6 py-3 w-24">
-                          <span
-                            className={`px-2 py-1 rounded-full text-xs font-semibold inline-block ${
-                              item.suspension_info?.suspended
-                                ? "bg-red-100 text-red-700"
-                                : "bg-green-100 text-green-700"
-                            }`}
-                          >
-                            {item.suspension_info?.suspended ? "Suspended" : "Active"}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3 w-24 text-center">
-                          <button
-                            onClick={() => {
-                              // TODO: Open mapping modal with this Uber item
-                              setError("Mapping modal coming soon");
-                            }}
-                            className="flex items-center justify-center gap-1 text-blue-600 hover:text-blue-700 font-semibold text-xs hover:bg-blue-50 px-2 py-1 rounded transition-colors w-full"
-                          >
-                            <Link2 className="w-3 h-3" />
-                            Map
-                          </button>
-                        </td>
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50">
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-120">Item Name</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-56">Item ID</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-40">Category</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Price</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Status</th>
+                        <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-30">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {getPaginatedUberItems().map((item) => (
+                        <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-6 py-3 flex-1 min-w-48">
+                            <p className="text-sm font-semibold text-gray-900">{getText(item.title)}</p>
+                          </td>
+                          <td className="px-6 py-3 w-56 text-xs text-gray-900 font-mono break-all">
+                            {item.id}
+                          </td>
+                          <td className="px-6 py-3 w-40 text-sm text-gray-900">
+                            {getCategoryName()}
+                          </td>
+                          <td className="px-6 py-3 w-20 text-sm font-bold text-gray-900">
+                            ${((item.price_info?.price || 0) / 100).toFixed(2)}
+                          </td>
+                          <td className="px-6 py-3 w-20">
+                            <span
+                              className={`px-2 py-1 rounded-full text-xs font-semibold inline-block bg-gray-100 text-gray-900`}
+                            >
+                              {item.suspension_info?.suspended ? "Suspended" : "Active"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3 w-30 text-center">
+                            <button
+                              onClick={() => {
+                                // TODO: Open mapping modal with this Uber item
+                                setError("Mapping modal coming soon");
+                              }}
+                              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-1.5 rounded-full transition-colors"
+                            >
+                              Map
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {getUberTotalPages() > 1 && (
+                  <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
+                    <div className="text-sm text-gray-600">
+                      Page {uberCurrentPage} of {getUberTotalPages()} · {getUnmappedUberItems().length} items
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setUberCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={uberCurrentPage === 1}
+                        className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      {Array.from({ length: getUberTotalPages() }, (_, i) => i + 1).map((page) => (
+                        <button
+                          key={page}
+                          onClick={() => setUberCurrentPage(page)}
+                          className={`px-3 py-1 rounded text-sm font-medium ${
+                            uberCurrentPage === page
+                              ? 'bg-blue-600 text-white'
+                              : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setUberCurrentPage(prev => Math.min(getUberTotalPages(), prev + 1))}
+                        disabled={uberCurrentPage === getUberTotalPages()}
+                        className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="px-6 py-12 text-center">
                 <p className="text-gray-600 font-semibold">All Uber items are mapped!</p>
@@ -461,47 +553,116 @@ export default function MenuSyncPage() {
         {activeTab === "unmapped-vend88" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             {getUnmappedVend88Items().length > 0 ? (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Item Name</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-28">SKU</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Price</th>
-                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-24">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {getUnmappedVend88Items().map((item) => (
-                      <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-6 py-3 flex-1 min-w-48">
-                          <p className="text-sm font-semibold text-gray-900">{item.name}</p>
-                          {item.description && (
-                            <p className="text-xs text-gray-600">{item.description.slice(0, 60)}...</p>
-                          )}
-                        </td>
-                        <td className="px-6 py-3 w-28 text-xs text-gray-900 font-mono bg-gray-100 px-2 py-1 rounded">
-                          {item.sku || "—"}
-                        </td>
-                        <td className="px-6 py-3 w-20 text-sm font-bold text-gray-900">
-                          ${(item.price / 100).toFixed(2)}
-                        </td>
-                        <td className="px-6 py-3 w-24 text-center">
-                          <button
-                            onClick={() => {
-                              // TODO: Open mapping modal with this Vend88 item
-                              setError("Mapping modal coming soon");
-                            }}
-                            className="flex items-center justify-center gap-1 text-blue-600 hover:text-blue-700 font-semibold text-xs hover:bg-blue-50 px-2 py-1 rounded transition-colors w-full"
-                          >
-                            Map
-                          </button>
-                        </td>
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50">
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-120">Item Name</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-56">Item ID</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-40">Category</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-24">SKU</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-48">Options</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Price</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Status</th>
+                        <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-30">Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {getPaginatedVend88Items().map((item) => {
+                        const categoryArray = Array.isArray(item.category) ? item.category : (item.category ? [item.category] : []);
+                        const optionNames = (item.options || []).map((opt: any) => opt.name).filter(Boolean);
+                        return (
+                          <tr key={item._id} className="hover:bg-gray-50 transition-colors">
+                            <td className="px-6 py-3 flex-1 min-w-48">
+                              <p className="text-sm font-semibold text-gray-900">{item.name}</p>
+                            </td>
+                            <td className="px-6 py-3 w-56 text-xs text-gray-900 font-mono break-all">
+                              {item._id}
+                            </td>
+                            <td className="px-6 py-3 w-40 text-sm text-gray-900">
+                              {categoryArray.length > 0 ? categoryArray.join(", ") : "—"}
+                            </td>
+                            <td className="px-6 py-3 w-24 text-xs text-gray-900 font-mono">
+                              {item.sku || "—"}
+                            </td>
+                            <td className="px-6 py-3 w-48">
+                              <div className="flex flex-wrap gap-2">
+                                {optionNames.length > 0 ? (
+                                  optionNames.map((optName, idx) => (
+                                    <span key={idx} className="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs font-medium">
+                                      {optName}
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-gray-500 text-xs">—</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-6 py-3 w-20 text-sm font-bold text-gray-900">
+                              ${(item.price / 100).toFixed(2)}
+                            </td>
+                            <td className="px-6 py-3 w-20">
+                              <span
+                                className={`px-2 py-1 rounded-full text-xs font-semibold inline-block bg-gray-100 text-gray-900`}
+                              >
+                                {item.active === false ? "Inactive" : "Active"}
+                              </span>
+                            </td>
+                            <td className="px-6 py-3 w-30 text-center">
+                              <button
+                                onClick={() => {
+                                  // TODO: Open mapping modal with this Vend88 item
+                                  setError("Mapping modal coming soon");
+                                }}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-1.5 rounded-full transition-colors"
+                              >
+                                Map
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {vend88MaxPage > 1 && (
+                  <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
+                    <div className="text-sm text-gray-600">
+                      Page {vend88CurrentPage + 1} of {vend88MaxPage} · Total: {vend88TotalCount > 0 ? vend88TotalCount + 1 : 0}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setVend88CurrentPage(prev => Math.max(0, prev - 1))}
+                        disabled={vend88CurrentPage === 0}
+                        className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      {Array.from({ length: vend88MaxPage }, (_, i) => i).map((page) => (
+                        <button
+                          key={page}
+                          onClick={() => setVend88CurrentPage(page)}
+                          className={`px-3 py-1 rounded text-sm font-medium ${
+                            vend88CurrentPage === page
+                              ? 'bg-blue-600 text-white'
+                              : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                          }`}
+                        >
+                          {page + 1}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setVend88CurrentPage(prev => Math.min(vend88MaxPage - 1, prev + 1))}
+                        disabled={vend88CurrentPage === vend88MaxPage - 1}
+                        className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="px-6 py-12 text-center">
                 <p className="text-gray-600 font-semibold">All Vend88 items are mapped!</p>
