@@ -2,7 +2,7 @@ import React from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import LoginPage from "./pages/Login";
 import ShopsPage from "./pages/Shops";
-import MenuSyncPage from "./pages/MenuSync";
+import MenuSyncPage from "./pages/Menu";
 import ShopDashboardPage from "./pages/ShopDashboard";
 import UberOAuthCallbackPage from "./pages/UberOAuthCallback";
 

@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getStoreMenu } from "../services/uberService";
-import { getPosProducts, getPosProductsCount } from "../services/posService";
+import { getPosProducts, getPosProductsCount, getPosOptions, getPosOptionsCount } from "../services/posService";
 import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X } from "lucide-react";
 
 interface MenuItem {
@@ -92,18 +92,41 @@ interface MenuData {
   modifier_groups?: any[];
 }
 
-type TabType = "mapped" | "unmapped-uber" | "unmapped-vend88";
+type ItemTabType = "item-mapped" | "item-unmapped-uber" | "item-unmapped-vend88";
+type OptionTabType = "option-mapped" | "option-unmapped-uber" | "option-unmapped-vend88";
 
 export default function MenuSyncPage() {
   const { businessId, uberStoreId } = useParams();
   const navigate = useNavigate();
 
-  const [activeTab, setActiveTab] = useState<TabType>("mapped");
+  // Item tab state
+  const [itemActiveTab, setItemActiveTab] = useState<ItemTabType>("item-mapped");
+  
+  // Option tab state
+  const [optionActiveTab, setOptionActiveTab] = useState<OptionTabType>("option-mapped");
+  
+  // Track which section is active
+  const [activeSection, setActiveSection] = useState<"items" | "options">("items");
+  
   const [menuData, setMenuData] = useState<MenuData | null>(null);
+  
+  // Vend88 Items state
   const [vend88Items, setVend88Items] = useState<Vend88Item[]>([]);
-  const [vend88CurrentPage, setVend88CurrentPage] = useState(0); // 0-based indexing
+  const [vend88CurrentPage, setVend88CurrentPage] = useState(-1); // Start with -1 to trigger initial load
   const [vend88MaxPage, setVend88MaxPage] = useState(0);
   const [vend88TotalCount, setVend88TotalCount] = useState(0);
+  
+  // Vend88 Options state
+  interface Option {
+    _id: string;
+    name: string;
+    option_items?: any[];
+  }
+  const [vend88Options, setVend88Options] = useState<Option[]>([]);
+  const [optionsCurrentPage, setOptionsCurrentPage] = useState(-1); // Start with -1 to trigger initial load
+  const [optionsMaxPage, setOptionsMaxPage] = useState(0);
+  const [optionsTotalCount, setOptionsTotalCount] = useState(0);
+  
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
@@ -153,11 +176,47 @@ export default function MenuSyncPage() {
     }
   };
 
+  // Load Vend88 options with pagination
+  const loadVend88Options = async (pageIdx: number = 0) => {
+    try {
+      const posToken = localStorage.getItem("posToken");
+      if (!posToken) {
+        console.warn("[MenuSync] No POS token found");
+        return;
+      }
+
+      if (!businessId) {
+        console.warn("[MenuSync] No business ID");
+        return;
+      }
+
+      console.log(`[MenuSync] Loading Vend88 options - page ${pageIdx}, size ${itemsPerPage}`);
+
+      const response = await getPosOptions(posToken, businessId, itemsPerPage, pageIdx);
+      const options = response.options || [];
+      const maxPage = response.max_page || 0;
+
+      setVend88Options(options);
+      setOptionsCurrentPage(pageIdx);
+      setOptionsMaxPage(maxPage);
+
+      console.log(`[MenuSync] Vend88 options loaded: ${options.length} options, max_page: ${maxPage}`);
+    } catch (err: any) {
+      console.error("[MenuSync] Failed to load Vend88 options:", err.message);
+    }
+  };
+
   // Load Vend88 products when page changes
   useEffect(() => {
     if (!businessId) return;
     loadVend88Products(vend88CurrentPage);
   }, [vend88CurrentPage, businessId]);
+
+  // Load Vend88 options when page changes
+  useEffect(() => {
+    if (!businessId) return;
+    loadVend88Options(optionsCurrentPage);
+  }, [optionsCurrentPage, businessId]);
 
   const loadData = async () => {
     if (!uberStoreId) return;
@@ -171,24 +230,30 @@ export default function MenuSyncPage() {
       const uberMenuData = await getStoreMenu(uberStoreId);
       setMenuData(uberMenuData);
 
-      // Load Vend88 products if businessId is available
+      // Load Vend88 products and options if businessId is available
       if (businessId) {
         try {
           const posToken = localStorage.getItem("posToken");
           if (!posToken) {
             console.warn("[MenuSync] No POS token found");
           } else {
-            // Get total count first
+            // Get total product count first
             const totalCount = await getPosProductsCount(posToken, businessId);
             setVend88TotalCount(totalCount);
-            console.log("[MenuSync] Vend88 total count:", totalCount);
+            console.log("[MenuSync] Vend88 total product count:", totalCount);
+
+            // Get total options count
+            const totalOptionsCount = await getPosOptionsCount(posToken, businessId);
+            setOptionsTotalCount(totalOptionsCount);
+            console.log("[MenuSync] Vend88 total options count:", totalOptionsCount);
           }
         } catch (err: any) {
-          console.error("[MenuSync] Failed to get Vend88 product count:", err.message);
+          console.error("[MenuSync] Failed to get Vend88 counts:", err.message);
         }
         
-        // Then load first page
-        await loadVend88Products(0);
+        // Reset page numbers to trigger useEffect for loading
+        setVend88CurrentPage(0);
+        setOptionsCurrentPage(0);
       }
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Uber menu:", err);
@@ -321,37 +386,96 @@ export default function MenuSyncPage() {
 
       {/* Tab Navigation */}
       <div className="bg-white border-b border-gray-200 px-8">
-        <div className="flex gap-0">
-          <button
-            onClick={() => setActiveTab("mapped")}
-            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === "mapped"
-                ? "border-black text-black"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Mapped ({getMappedUberItems().length})
-          </button>
-          <button
-            onClick={() => setActiveTab("unmapped-uber")}
-            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === "unmapped-uber"
-                ? "border-black text-black"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Uber Items ({getUnmappedUberItems().length})
-          </button>
-          <button
-            onClick={() => setActiveTab("unmapped-vend88")}
-            className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
-              activeTab === "unmapped-vend88"
-                ? "border-black text-black"
-                : "border-transparent text-gray-600 hover:text-gray-900"
-            }`}
-          >
-            Vend88 Items ({vend88TotalCount > 0 ? vend88TotalCount + 1 : 0})
-          </button>
+        <div className="flex gap-8">
+          {/* Item Tabs Section */}
+          <div className="flex-1 border-r border-gray-200">
+            <div className="flex gap-0">
+              <button
+                onClick={() => {
+                  setItemActiveTab("item-mapped");
+                  setActiveSection("items");
+                }}
+                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  activeSection === "items" && itemActiveTab === "item-mapped"
+                    ? "border-black text-black"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Item Mapped ({getMappedUberItems().length})
+              </button>
+              <button
+                onClick={() => {
+                  setItemActiveTab("item-unmapped-uber");
+                  setActiveSection("items");
+                }}
+                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  activeSection === "items" && itemActiveTab === "item-unmapped-uber"
+                    ? "border-black text-black"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Uber Items ({getUnmappedUberItems().length})
+              </button>
+              <button
+                onClick={() => {
+                  setItemActiveTab("item-unmapped-vend88");
+                  setActiveSection("items");
+                }}
+                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  activeSection === "items" && itemActiveTab === "item-unmapped-vend88"
+                    ? "border-black text-black"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Vend88 Items ({vend88TotalCount > 0 ? vend88TotalCount + 1 : 0})
+              </button>
+            </div>
+          </div>
+
+          {/* Option Tabs Section */}
+          <div className="flex-1">
+            <div className="flex gap-0">
+              <button
+                onClick={() => {
+                  setOptionActiveTab("option-mapped");
+                  setActiveSection("options");
+                }}
+                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  activeSection === "options" && optionActiveTab === "option-mapped"
+                    ? "border-black text-black"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Option Mapped (0)
+              </button>
+              <button
+                onClick={() => {
+                  setOptionActiveTab("option-unmapped-uber");
+                  setActiveSection("options");
+                }}
+                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  activeSection === "options" && optionActiveTab === "option-unmapped-uber"
+                    ? "border-black text-black"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Uber Options (0)
+              </button>
+              <button
+                onClick={() => {
+                  setOptionActiveTab("option-unmapped-vend88");
+                  setActiveSection("options");
+                }}
+                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  activeSection === "options" && optionActiveTab === "option-unmapped-vend88"
+                    ? "border-black text-black"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Vend88 Options ({optionsTotalCount > 0 ? optionsTotalCount + 1 : 0})
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -381,8 +505,8 @@ export default function MenuSyncPage() {
           </div>
         )}
 
-        {/* Tab Content */}
-        {activeTab === "mapped" && (
+        {/* Tab Content - Items Section */}
+        {activeSection === "items" && itemActiveTab === "item-mapped" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             {getMappedVend88Items().length > 0 ? (
               <div className="overflow-x-auto">
@@ -450,7 +574,7 @@ export default function MenuSyncPage() {
           </div>
         )}
 
-        {activeTab === "unmapped-uber" && (
+        {activeSection === "items" && itemActiveTab === "item-unmapped-uber" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             {getUnmappedUberItems().length > 0 ? (
               <>
@@ -550,7 +674,7 @@ export default function MenuSyncPage() {
           </div>
         )}
 
-        {activeTab === "unmapped-vend88" && (
+        {activeSection === "items" && itemActiveTab === "item-unmapped-vend88" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             {getUnmappedVend88Items().length > 0 ? (
               <>
@@ -667,6 +791,125 @@ export default function MenuSyncPage() {
               <div className="px-6 py-12 text-center">
                 <p className="text-gray-600 font-semibold">All Vend88 items are mapped!</p>
                 <p className="text-sm text-gray-500 mt-1">Your POS inventory is fully synced to Uber</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Option Mapped Tab */}
+        {activeSection === "options" && optionActiveTab === "option-mapped" && (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="px-6 py-12 text-center">
+              <p className="text-gray-600 font-semibold">No mapped options yet</p>
+              <p className="text-sm text-gray-500 mt-1">Map Vend88 options to Uber options to see them here</p>
+            </div>
+          </div>
+        )}
+
+        {/* Uber Options Tab */}
+        {activeSection === "options" && optionActiveTab === "option-unmapped-uber" && (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            <div className="px-6 py-12 text-center">
+              <p className="text-gray-600 font-semibold">No Uber options available</p>
+              <p className="text-sm text-gray-500 mt-1">Uber does not have a direct options API</p>
+            </div>
+          </div>
+        )}
+
+        {/* Vend88 Options Tab */}
+        {activeSection === "options" && optionActiveTab === "option-unmapped-vend88" && (
+          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+            {vend88Options.length > 0 ? (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50">
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Option Name</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-56">Option ID</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-64">Items</th>
+                        <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-30">Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {vend88Options.map((option) => (
+                        <tr key={option._id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-6 py-3 flex-1 min-w-48">
+                            <p className="text-sm font-semibold text-gray-900">{option.name}</p>
+                          </td>
+                          <td className="px-6 py-3 w-56 text-xs text-gray-900 font-mono break-all">
+                            {option._id}
+                          </td>
+                          <td className="px-6 py-3 flex-1 min-w-64">
+                            <div className="flex flex-wrap gap-2">
+                              {option.option_items && option.option_items.length > 0 ? (
+                                option.option_items.map((item: any, idx: number) => (
+                                  <span key={idx} className="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs font-medium">
+                                    {item.name}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-gray-500 text-xs">—</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-3 w-30 text-center">
+                            <button
+                              onClick={() => {
+                                // TODO: Open mapping modal with this option
+                                setError("Option mapping coming soon");
+                              }}
+                              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-1.5 rounded-full transition-colors"
+                            >
+                              Map
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {optionsMaxPage > 1 && (
+                  <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
+                    <div className="text-sm text-gray-600">
+                      Page {optionsCurrentPage + 1} of {optionsMaxPage} · Total: {optionsTotalCount > 0 ? optionsTotalCount + 1 : 0}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setOptionsCurrentPage(prev => Math.max(0, prev - 1))}
+                        disabled={optionsCurrentPage === 0}
+                        className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      {Array.from({ length: optionsMaxPage }, (_, i) => i).map((page) => (
+                        <button
+                          key={page}
+                          onClick={() => setOptionsCurrentPage(page)}
+                          className={`px-3 py-1 rounded text-sm font-medium ${
+                            optionsCurrentPage === page
+                              ? 'bg-blue-600 text-white'
+                              : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
+                          }`}
+                        >
+                          {page + 1}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setOptionsCurrentPage(prev => Math.min(optionsMaxPage - 1, prev + 1))}
+                        disabled={optionsCurrentPage === optionsMaxPage - 1}
+                        className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="px-6 py-12 text-center">
+                <p className="text-gray-600 font-semibold">No options available</p>
+                <p className="text-sm text-gray-500 mt-1">Your POS system has no options configured yet</p>
               </div>
             )}
           </div>

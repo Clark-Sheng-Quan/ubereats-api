@@ -43,7 +43,6 @@ router.use(verifyTokenMiddleware());
 router.post("/shops", async (req, res) => {
   try {
     const token = req.token;
-    console.log('[PosService] Fetching shops for user');
 
     const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
       token,
@@ -92,8 +91,6 @@ router.post("/shop/:shopId", async (req, res) => {
       token,
     });
 
-    console.log('[PosService] Got shops list, filtering for ID:', shopId);
-
     const allShops = response.data?.shops || [];
     const shop = allShops.find((s) => s._id === shopId);
 
@@ -120,66 +117,6 @@ router.post("/shop/:shopId", async (req, res) => {
     });
   }
 });
-/**
- * GET /api/service/pos/search-products
- * Search products from POS system
- * Authorization: Bearer {token} OR Query: { business_id, page_size, page_idx }
- */
-router.get('/search-products', async (req, res) => {
-  try {
-    const token = req.token;
-    const { business_id, page_size = '20', page_idx = '0' } = req.query;
-    const pageSize = parseInt(page_size);
-    const pageIdx = parseInt(page_idx);
-
-    if (!business_id) {
-      return res.status(400).json({
-        status_code: 400,
-        success: false,
-        message: 'Business ID is required'
-      });
-    }
-
-    console.log('[PosService] Searching products - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
-
-    const client = axios.create({
-      baseURL: POS_API_BASE,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 10000
-    });
-
-    // Call /search/product_search with business_id and pagination
-    const response = await client.post('/search/product_search', {
-      query: {
-        business_id: business_id
-      },
-      page_size: pageSize,
-      page_idx: pageIdx,
-      detail: true
-    });
-
-    console.log('[PosService] Products searched successfully');
-
-    res.json({
-      status_code: 200,
-      success: true,
-      data: response.data
-    });
-  } catch (error) {
-    console.error('[PosService] Search products error:', error.message);
-
-    res.status(error.response?.status || 500).json({
-      status_code: error.response?.status || 500,
-      success: false,
-      message: error.response?.data?.message || 'Failed to search products',
-      error: error.message
-    });
-  }
-});
-
 /**
  * GET /api/service/pos/products
  * Get all products for a shop/business
@@ -254,6 +191,94 @@ router.get('/products', async (req, res) => {
       status_code: error.response?.status || 500,
       success: false,
       message: error.response?.data?.message || 'Failed to fetch products',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/service/pos/options - Get product options from POS system (with pagination)
+ * Query params: business_id, page_size (default: 50), page_idx (default: 0)
+ * Token from Authorization header
+ */
+router.get('/options', async (req, res) => {
+  try {
+    const { business_id, page_size = '50', page_idx = '0' } = req.query;
+    const pageSize = parseInt(page_size);
+    const pageIdx = parseInt(page_idx);
+    const token = req.token;
+
+    if (!token) {
+      return res.status(401).json({
+        status_code: 401,
+        success: false,
+        message: 'Token is required in Authorization header'
+      });
+    }
+
+    if (!business_id) {
+      return res.status(400).json({
+        status_code: 400,
+        success: false,
+        message: 'Business ID is required'
+      });
+    }
+
+    console.log('[PosService] Fetching options - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
+
+    const client = axios.create({
+      baseURL: POS_API_BASE,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      timeout: 10000
+    });
+
+    // Call /search/option_search to get all options
+    const response = await client.post('/search/option_search', {
+      query: {
+        business_id: business_id
+      },
+      detail: true
+    });
+
+    // Extract and format option data - only keep _id, name, and option_items with _id and name
+    const allOptions = (response.data?.option || []).map(option => ({
+      _id: option._id,
+      name: option.name,
+      option_items: (option.option_items || []).map(item => ({
+        _id: item._id,
+        name: item.name
+      }))
+    }));
+
+    // Apply pagination on the formatted data
+    const startIdx = pageIdx * pageSize;
+    const endIdx = startIdx + pageSize;
+    const paginatedOptions = allOptions.slice(startIdx, endIdx);
+    const maxPage = Math.ceil(allOptions.length / pageSize) || 1;
+
+    res.json({
+      status_code: 200,
+      success: true,
+      data: {
+        options: paginatedOptions,
+        max_page: maxPage,
+        page_idx: pageIdx,
+        page_size: pageSize,
+        total: allOptions.length
+      }
+    });
+
+    console.log('[PosService] Options fetched successfully - total:', allOptions.length, 'max_page:', maxPage);
+  } catch (error) {
+    console.error('[PosService] Fetch options error:', error.message);
+
+    res.status(error.response?.status || 500).json({
+      status_code: error.response?.status || 500,
+      success: false,
+      message: error.response?.data?.message || 'Failed to fetch options',
       error: error.message
     });
   }
