@@ -112,7 +112,7 @@ export default function MenuSyncPage() {
   
   // Vend88 Items state
   const [vend88Items, setVend88Items] = useState<Vend88Item[]>([]);
-  const [vend88CurrentPage, setVend88CurrentPage] = useState(-1); // Start with -1 to trigger initial load
+  const [vend88CurrentPage, setVend88CurrentPage] = useState(0);
   const [vend88MaxPage, setVend88MaxPage] = useState(0);
   const [vend88TotalCount, setVend88TotalCount] = useState(0);
   
@@ -123,7 +123,7 @@ export default function MenuSyncPage() {
     option_items?: any[];
   }
   const [vend88Options, setVend88Options] = useState<Option[]>([]);
-  const [optionsCurrentPage, setOptionsCurrentPage] = useState(-1); // Start with -1 to trigger initial load
+  const [optionsCurrentPage, setOptionsCurrentPage] = useState(0);
   const [optionsMaxPage, setOptionsMaxPage] = useState(0);
   const [optionsTotalCount, setOptionsTotalCount] = useState(0);
   
@@ -246,14 +246,14 @@ export default function MenuSyncPage() {
             const totalOptionsCount = await getPosOptionsCount(posToken, businessId);
             setOptionsTotalCount(totalOptionsCount);
             console.log("[MenuSync] Vend88 total options count:", totalOptionsCount);
+
+            // Load first page of products and options directly
+            await loadVend88Products(0);
+            await loadVend88Options(0);
           }
         } catch (err: any) {
-          console.error("[MenuSync] Failed to get Vend88 counts:", err.message);
+          console.error("[MenuSync] Failed to load Vend88 data:", err.message);
         }
-        
-        // Reset page numbers to trigger useEffect for loading
-        setVend88CurrentPage(0);
-        setOptionsCurrentPage(0);
       }
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Uber menu:", err);

@@ -270,8 +270,6 @@ router.get('/options', async (req, res) => {
         total: allOptions.length
       }
     });
-
-    console.log('[PosService] Options fetched successfully - total:', allOptions.length, 'max_page:', maxPage);
   } catch (error) {
     console.error('[PosService] Fetch options error:', error.message);
 
