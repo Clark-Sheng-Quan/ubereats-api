@@ -18,7 +18,6 @@ interface MenuItem {
     price?: number;
     overrides?: any[];
   };
-  tax_info?: Record<string, any>;
   dish_info?: {
     classifications?: Record<string, any>;
   };

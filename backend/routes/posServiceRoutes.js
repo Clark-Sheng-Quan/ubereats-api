@@ -186,9 +186,11 @@ router.get('/products', async (req, res) => {
       _id: product._id || product.product_id,
       name: product.name,
       price: product.price,
+      description: product.description,
+      calorie: product.calorie,
       sku: product.sku,
       category: Array.isArray(product.category) ? product.category[0] : product.category,
-      active: product.active || true,
+      active: product.active !== false,
       image_url: Array.isArray(product.image_urls) ? product.image_urls[0] : product.image_urls,
       options: product.options || []
     }));

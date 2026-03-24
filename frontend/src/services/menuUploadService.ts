@@ -7,6 +7,9 @@ interface Vend88Product {
   _id: string;
   name: string;
   price: number;
+  description?: string;
+  calorie?: number;
+  sku?: string;
   image_url?: string;
   active?: boolean;
   options?: Array<{ _id?: string; id?: string; name?: string }>;
@@ -178,10 +181,6 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
           price: toMinorUnitInt(item.price_adjust ?? item.price ?? 0),
           overrides: [],
         },
-        tax_info: {
-          tax_rate: 0,
-          vat_rate_percentage: 0,
-        },
         suspension_info: {
           suspended: false,
         },
@@ -235,7 +234,7 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
 
     return {
       id: product._id,
-      external_data: product._id,
+      external_data: product.sku || undefined,
       title: {
         translations: {
           en_us: product.name || "Untitled Item",
@@ -243,7 +242,7 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
       },
       description: {
         translations: {
-          en_us: "",
+          en_us: product.description || "",
         },
       },
       image_url: product.image_url || undefined,
@@ -251,10 +250,15 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
         price: toMinorUnitInt(product.price),
         overrides: [],
       },
-      tax_info: {
-        tax_rate: 0,
-        vat_rate_percentage: 0,
-      },
+      nutritional_info:
+        typeof product.calorie === "number" && product.calorie > 0
+          ? {
+              calories: {
+                lower_range: Math.round(product.calorie),
+                display_type: "single_item",
+              },
+            }
+          : undefined,
       suspension_info: {
         suspended: product.active === false,
       },

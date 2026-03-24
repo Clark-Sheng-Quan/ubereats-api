@@ -13,6 +13,8 @@ interface Vend88Item {
   _id: string;
   name: string;
   price: number; // in cents
+  description?: string;
+  calorie?: number;
   sku?: string;
   category?: string;
   active?: boolean;
