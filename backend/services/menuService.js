@@ -198,18 +198,11 @@ export async function uploadMenu(storeId, menuConfig) {
     modifier_groups: menuConfig.modifier_groups || [],
   };
 
-  // Remove empty arrays
-  if (!body.menus.length) delete body.menus;
-  if (!body.categories.length) delete body.categories;
-  if (!body.items.length) delete body.items;
-  if (!body.modifier_groups.length) delete body.modifier_groups;
-
   const response = await fetch(url, {
     method: "PUT",
     headers: {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
-      "Content-Encoding": "gzip",
     },
     body: JSON.stringify(body),
   });

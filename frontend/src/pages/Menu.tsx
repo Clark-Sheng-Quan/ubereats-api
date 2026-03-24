@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getStoreMenu } from "../services/uberService";
 import { getPosProducts, getPosProductsCount, getPosOptions, getPosOptionsCount } from "../services/posService";
+import { uploadVend88MenuToUber } from "../services/menuUploadService";
 import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X } from "lucide-react";
 
 interface MenuItem {
@@ -27,6 +28,10 @@ interface MenuItem {
   };
   suspension_info?: {
     suspended?: boolean;
+  };
+  modifier_group_ids?: {
+    ids?: string[];
+    overrides?: any[];
   };
   bundled_items?: any;
 }
@@ -55,6 +60,21 @@ interface Mapping {
 interface MenuEntity {
   id: string;
   type?: "ITEM" | "MODIFIER_GROUP";
+}
+
+interface ModifierOption {
+  id: string;
+  type?: "ITEM" | "MODIFIER_GROUP";
+}
+
+interface ModifierGroup {
+  id: string;
+  title?: {
+    translations?: Record<string, string>;
+  };
+  external_data?: string;
+  modifier_options?: ModifierOption[];
+  display_type?: "expanded" | "collapsed";
 }
 
 interface MenuCategory {
@@ -110,6 +130,9 @@ export default function MenuSyncPage() {
   
   const [menuData, setMenuData] = useState<MenuData | null>(null);
   
+  // Uber Options state
+  const [uberOptions, setUberOptions] = useState<ModifierGroup[]>([]);
+  
   // Vend88 Items state
   const [vend88Items, setVend88Items] = useState<Vend88Item[]>([]);
   const [vend88CurrentPage, setVend88CurrentPage] = useState(0);
@@ -126,13 +149,17 @@ export default function MenuSyncPage() {
   const [optionsCurrentPage, setOptionsCurrentPage] = useState(0);
   const [optionsMaxPage, setOptionsMaxPage] = useState(0);
   const [optionsTotalCount, setOptionsTotalCount] = useState(0);
+  const [uberOptionsCurrentPage, setUberOptionsCurrentPage] = useState(1);
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [uploadingMenu, setUploadingMenu] = useState(false);
+  const [showUploadModeModal, setShowUploadModeModal] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [uberCurrentPage, setUberCurrentPage] = useState(1);
   const itemsPerPage = 15;
+  const optionItemsPerPage = 50;
   
   // 模拟映射数据（后续替换为API调用）
   const [mappings] = useState<Mapping[]>([]);
@@ -190,9 +217,9 @@ export default function MenuSyncPage() {
         return;
       }
 
-      console.log(`[MenuSync] Loading Vend88 options - page ${pageIdx}, size ${itemsPerPage}`);
+      console.log(`[MenuSync] Loading Vend88 options - page ${pageIdx}, size ${optionItemsPerPage}`);
 
-      const response = await getPosOptions(posToken, businessId, itemsPerPage, pageIdx);
+      const response = await getPosOptions(posToken, businessId, optionItemsPerPage, pageIdx);
       const options = response.options || [];
       const maxPage = response.max_page || 0;
 
@@ -229,6 +256,12 @@ export default function MenuSyncPage() {
       // Load Uber menu
       const uberMenuData = await getStoreMenu(uberStoreId);
       setMenuData(uberMenuData);
+      
+      // Extract and set Uber modifier groups as options
+      const modifierGroups = uberMenuData?.modifier_groups || [];
+      setUberOptions(modifierGroups);
+      setUberOptionsCurrentPage(1);
+      console.log("[MenuSync] Loaded Uber options (modifier_groups):", modifierGroups.length);
 
       // Load Vend88 products and options if businessId is available
       if (businessId) {
@@ -281,18 +314,106 @@ export default function MenuSyncPage() {
     }
   };
 
+  const handleUploadMenu = async (mode: "replace" | "merge") => {
+    if (!uberStoreId || !businessId) {
+      setError("Missing store or business information");
+      return;
+    }
+
+    const posToken = localStorage.getItem("posToken");
+    if (!posToken) {
+      setError("No POS token found. Please login again.");
+      return;
+    }
+
+    try {
+      setUploadingMenu(true);
+      setShowUploadModeModal(false);
+      setError("");
+      setSuccess("");
+
+      const result = await uploadVend88MenuToUber({
+        storeId: uberStoreId,
+        businessId,
+        posToken,
+        mode,
+      });
+
+      setSuccess(
+        `Upload success (${result.mode}): ${result.productCount} products, ${result.optionGroupCount} option groups, ${result.optionItemCount} option items`
+      );
+      setTimeout(() => setSuccess(""), 4000);
+
+      await loadData();
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || "Failed to upload menu");
+    } finally {
+      setUploadingMenu(false);
+    }
+  };
+
+  const getUberModifierOptionItemIds = () => {
+    const modifierItemIds = new Set<string>();
+    (uberOptions || []).forEach((group) => {
+      (group.modifier_options || []).forEach((option) => {
+        if (option?.type === "ITEM" && option.id) {
+          modifierItemIds.add(option.id);
+        }
+      });
+    });
+    return modifierItemIds;
+  };
+
+  const getUberBaseItems = () => {
+    const modifierItemIds = getUberModifierOptionItemIds();
+    return (menuData?.items || []).filter((item) => !modifierItemIds.has(item.id));
+  };
+
+  const getUberItemNameById = (itemId: string) => {
+    const item = (menuData?.items || []).find((it) => it.id === itemId);
+    if (!item) return "—";
+    return getText(item.title);
+  };
+
+  const getUberItemPriceById = (itemId: string) => {
+    const item = (menuData?.items || []).find((it) => it.id === itemId);
+    if (!item) return "—";
+    const cents = item.price_info?.price;
+    if (typeof cents !== "number") return "—";
+    return `$${(cents / 100).toFixed(2)}`;
+  };
+
+  const formatVend88DisplayPrice = (rawPrice: unknown) => {
+    const value = Number(rawPrice);
+    if (!Number.isFinite(value)) return "—";
+
+    // Vend88 prices are in major currency units.
+    return `$${value.toFixed(2)}`;
+  };
+
+  const getModifierGroupNameById = (groupId: string) => {
+    const group = (uberOptions || []).find((g) => g.id === groupId);
+    if (!group) return groupId;
+    return getText(group.title) || groupId;
+  };
+
+  const getUberItemOptionGroupNames = (item: MenuItem) => {
+    const groupIds = item.modifier_group_ids?.ids || [];
+    return groupIds.map((groupId) => getModifierGroupNameById(groupId));
+  };
+
   // 获取已映射的 Uber 商品
   const getMappedUberItems = () => {
-    return menuData?.items?.filter((item) =>
+    return getUberBaseItems().filter((item) =>
       mappings.some((m) => m.uberItemId === item.id)
-    ) || [];
+    );
   };
 
   // 获取未映射的 Uber 商品
   const getUnmappedUberItems = () => {
-    return menuData?.items?.filter((item) =>
+    return getUberBaseItems().filter((item) =>
       !mappings.some((m) => m.uberItemId === item.id)
-    ) || [];
+    );
   };
 
   // 获取已映射的 Vend88 商品
@@ -322,8 +443,12 @@ export default function MenuSyncPage() {
   };
 
   const getUberTotalPages = () => Math.ceil(getUnmappedUberItems().length / itemsPerPage);
-  const getVend88TotalPages = () => Math.ceil(getUnmappedVend88Items().length / itemsPerPage);
+  const getPaginatedUberOptions = () => {
+    const startIndex = (uberOptionsCurrentPage - 1) * optionItemsPerPage;
+    return uberOptions.slice(startIndex, startIndex + optionItemsPerPage);
+  };
 
+  const getUberOptionsTotalPages = () => Math.ceil(uberOptions.length / optionItemsPerPage);
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -373,14 +498,23 @@ export default function MenuSyncPage() {
               </p>
             </div>
           </div>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded font-semibold hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-            {refreshing ? "Refreshing..." : "Refresh"}
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing || uploadingMenu}
+              className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded font-semibold hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
+            <button
+              onClick={() => setShowUploadModeModal(true)}
+              disabled={uploadingMenu || refreshing}
+              className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {uploadingMenu ? "Uploading..." : "Upload Menu"}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -427,7 +561,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Vend88 Items ({vend88TotalCount > 0 ? vend88TotalCount + 1 : 0})
+                Vend88 Items ({vend88TotalCount > 0 ? vend88TotalCount : 0})
               </button>
             </div>
           </div>
@@ -459,7 +593,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Uber Options (0)
+                Uber Options ({uberOptions.length})
               </button>
               <button
                 onClick={() => {
@@ -472,7 +606,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Vend88 Options ({optionsTotalCount > 0 ? optionsTotalCount + 1 : 0})
+                Vend88 Options ({optionsTotalCount > 0 ? optionsTotalCount : 0})
               </button>
             </div>
           </div>
@@ -585,6 +719,7 @@ export default function MenuSyncPage() {
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-120">Item Name</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-56">Item ID</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-40">Category</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-48">Option</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Price</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-20">Status</th>
                         <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-30">Action</th>
@@ -601,6 +736,19 @@ export default function MenuSyncPage() {
                           </td>
                           <td className="px-6 py-3 w-40 text-sm text-gray-900">
                             {getCategoryName()}
+                          </td>
+                          <td className="px-6 py-3 w-48">
+                            <div className="flex flex-wrap gap-2">
+                              {getUberItemOptionGroupNames(item).length > 0 ? (
+                                getUberItemOptionGroupNames(item).map((optionName, idx) => (
+                                  <span key={idx} className="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs font-medium">
+                                    {optionName}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-gray-500 text-xs">—</span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-6 py-3 w-20 text-sm font-bold text-gray-900">
                             ${((item.price_info?.price || 0) / 100).toFixed(2)}
@@ -724,7 +872,7 @@ export default function MenuSyncPage() {
                               </div>
                             </td>
                             <td className="px-6 py-3 w-20 text-sm font-bold text-gray-900">
-                              ${(item.price / 100).toFixed(2)}
+                              {formatVend88DisplayPrice(item.price)}
                             </td>
                             <td className="px-6 py-3 w-20">
                               <span
@@ -753,7 +901,7 @@ export default function MenuSyncPage() {
                 {vend88MaxPage > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
                     <div className="text-sm text-gray-600">
-                      Page {vend88CurrentPage + 1} of {vend88MaxPage} · Total: {vend88TotalCount > 0 ? vend88TotalCount + 1 : 0}
+                      Page {vend88CurrentPage + 1} of {vend88MaxPage} · Total: {vend88TotalCount > 0 ? vend88TotalCount : 0}
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -809,10 +957,116 @@ export default function MenuSyncPage() {
         {/* Uber Options Tab */}
         {activeSection === "options" && optionActiveTab === "option-unmapped-uber" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div className="px-6 py-12 text-center">
-              <p className="text-gray-600 font-semibold">No Uber options available</p>
-              <p className="text-sm text-gray-500 mt-1">Uber does not have a direct options API</p>
-            </div>
+            {uberOptions.length > 0 ? (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="border-b border-gray-200 bg-gray-50">
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Option Group Name</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-56">Option ID</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-40">Display Type</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-64">Option Items</th>
+                        <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-56">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {getPaginatedUberOptions().map((modifierGroup) => (
+                        <tr key={modifierGroup.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-6 py-3 flex-1 min-w-48">
+                            <p className="text-sm font-semibold text-gray-900">{getText(modifierGroup.title)}</p>
+                          </td>
+                          <td className="px-6 py-3 w-56 text-xs text-gray-900 font-mono break-all">
+                            {modifierGroup.id}
+                          </td>
+                          <td className="px-6 py-3 w-40 text-sm text-gray-900">
+                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-medium">
+                              {modifierGroup.display_type || "expanded"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3 flex-1 min-w-64">
+                            <div className="space-y-2">
+                              {modifierGroup.modifier_options && modifierGroup.modifier_options.length > 0 ? (
+                                <>
+                                  <div className="grid grid-cols-3 gap-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-2">
+                                    <span>Name</span>
+                                    <span>ID</span>
+                                    <span>Price</span>
+                                  </div>
+                                  {modifierGroup.modifier_options.map((item, idx) => (
+                                    <div key={idx} className="grid grid-cols-3 gap-2 text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1.5">
+                                      <span className="text-gray-900 font-medium truncate" title={getUberItemNameById(item.id)}>
+                                        {getUberItemNameById(item.id)}
+                                      </span>
+                                      <span className="text-gray-900 font-mono break-all">{item.id}</span>
+                                      <span className="text-gray-900 font-semibold">{getUberItemPriceById(item.id)}</span>
+                                    </div>
+                                  ))}
+                                </>
+                              ) : (
+                                <span className="text-gray-500 text-xs">—</span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-6 py-3 w-30 text-center">
+                            <button
+                              onClick={() => {
+                                // TODO: Open mapping modal with this option
+                                setError("Uber option mapping coming soon");
+                              }}
+                              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-1.5 rounded-full transition-colors"
+                            >
+                              Map
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {getUberOptionsTotalPages() > 1 && (
+                  <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
+                    <div className="text-sm text-gray-600">
+                      Page {uberOptionsCurrentPage} of {getUberOptionsTotalPages()} · Total: {uberOptions.length}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setUberOptionsCurrentPage(prev => Math.max(1, prev - 1))}
+                        disabled={uberOptionsCurrentPage === 1}
+                        className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Previous
+                      </button>
+                      {Array.from({ length: getUberOptionsTotalPages() }, (_, i) => i + 1).map((page) => (
+                        <button
+                          key={page}
+                          onClick={() => setUberOptionsCurrentPage(page)}
+                          className={`px-3 py-1 rounded text-sm font-medium ${
+                            uberOptionsCurrentPage === page
+                              ? "bg-blue-600 text-white"
+                              : "border border-gray-300 text-gray-700 hover:bg-gray-100"
+                          }`}
+                        >
+                          {page}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setUberOptionsCurrentPage(prev => Math.min(getUberOptionsTotalPages(), prev + 1))}
+                        disabled={uberOptionsCurrentPage === getUberOptionsTotalPages()}
+                        className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="px-6 py-12 text-center">
+                <p className="text-gray-600 font-semibold">No Uber options available</p>
+                <p className="text-sm text-gray-500 mt-1">This store does not have any modifier groups configured</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -827,7 +1081,7 @@ export default function MenuSyncPage() {
                       <tr className="border-b border-gray-200 bg-gray-50">
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Option Name</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-56">Option ID</th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-64">Items</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-64">Option Items</th>
                         <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-30">Action</th>
                       </tr>
                     </thead>
@@ -841,13 +1095,36 @@ export default function MenuSyncPage() {
                             {option._id}
                           </td>
                           <td className="px-6 py-3 flex-1 min-w-64">
-                            <div className="flex flex-wrap gap-2">
+                            <div className="space-y-2">
                               {option.option_items && option.option_items.length > 0 ? (
-                                option.option_items.map((item: any, idx: number) => (
-                                  <span key={idx} className="bg-gray-100 text-gray-800 px-2 py-1 rounded text-xs font-medium">
-                                    {item.name}
-                                  </span>
-                                ))
+                                <>
+                                  <div className="grid grid-cols-3 gap-2 text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-2">
+                                    <span>Name</span>
+                                    <span>ID</span>
+                                    <span>Price</span>
+                                  </div>
+                                  {option.option_items.map((item: any, idx: number) => {
+                                    const rawPrice = item.price_adjust ?? item.price;
+                                    let price = "—";
+
+                                    if (rawPrice !== undefined && rawPrice !== null && rawPrice !== "") {
+                                      const numericPrice = Number(rawPrice);
+                                      if (Number.isFinite(numericPrice)) {
+                                        price = formatVend88DisplayPrice(numericPrice);
+                                      }
+                                    }
+
+                                    return (
+                                      <div key={idx} className="grid grid-cols-3 gap-2 text-xs bg-gray-50 border border-gray-200 rounded px-2 py-1.5">
+                                        <span className="text-gray-900 font-medium truncate" title={item.name || "—"}>
+                                          {item.name || "—"}
+                                        </span>
+                                        <span className="text-gray-900 font-mono break-all">{item._id || item.id || "—"}</span>
+                                        <span className="text-gray-900 font-semibold">{price}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </>
                               ) : (
                                 <span className="text-gray-500 text-xs">—</span>
                               )}
@@ -872,7 +1149,7 @@ export default function MenuSyncPage() {
                 {optionsMaxPage > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
                     <div className="text-sm text-gray-600">
-                      Page {optionsCurrentPage + 1} of {optionsMaxPage} · Total: {optionsTotalCount > 0 ? optionsTotalCount + 1 : 0}
+                      Page {optionsCurrentPage + 1} of {optionsMaxPage} · Total: {optionsTotalCount > 0 ? optionsTotalCount : 0}
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -922,6 +1199,67 @@ export default function MenuSyncPage() {
           </div>
         )}
       </div>
+
+      {showUploadModeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-lg">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Upload Menu</h2>
+              <button
+                onClick={() => setShowUploadModeModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+                disabled={uploadingMenu}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="px-6 py-5 space-y-4">
+              <p className="text-sm text-gray-700">
+                Choose how to upload Vend88 menu data to Uber:
+              </p>
+
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="text-sm font-semibold text-gray-900">Replace (Vend88 full overwrite)</p>
+                <p className="text-xs text-gray-600 mt-1">
+                  Replace Uber menu with Vend88 menu data.
+                </p>
+                <button
+                  onClick={() => handleUploadMenu("replace")}
+                  disabled={uploadingMenu}
+                  className="mt-3 bg-red-600 hover:bg-red-700 text-white font-semibold text-sm px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Confirm Replace Upload
+                </button>
+              </div>
+
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="text-sm font-semibold text-gray-900">Merge (keep existing Uber menu)</p>
+                <p className="text-xs text-gray-600 mt-1">
+                  Keep existing Uber items and merge Vend88 items/options into menu.
+                </p>
+                <button
+                  onClick={() => handleUploadMenu("merge")}
+                  disabled={uploadingMenu}
+                  className="mt-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Confirm Merge Upload
+                </button>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-200 flex justify-end">
+              <button
+                onClick={() => setShowUploadModeModal(false)}
+                disabled={uploadingMenu}
+                className="px-4 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -193,12 +193,17 @@ router.get('/products', async (req, res) => {
       options: product.options || []
     }));
 
+    // POS max_page is a 0-based max page index.
+    // Normalize to page count for frontend usage.
+    const rawMaxPage = Number(response.data?.max_page);
+    const maxPage = Number.isFinite(rawMaxPage) ? rawMaxPage + 1 : 0;
+
     res.json({
       status_code: 200,
       success: true,
       data: {
         products: products,
-        max_page: response.data?.max_page,
+        max_page: maxPage,
         page_idx: pageIdx,
         page_size: pageSize
       }
@@ -264,13 +269,15 @@ router.get('/options', async (req, res) => {
       detail: true
     });
 
-    // Extract and format option data - only keep _id, name, and option_items with _id and name
+    // Extract and format option data - preserve option item price fields (price_adjust)
     const allOptions = (response.data?.option || []).map(option => ({
       _id: option._id,
       name: option.name,
       option_items: (option.option_items || []).map(item => ({
         _id: item._id,
-        name: item.name
+        name: item.name,
+        price_adjust: item.price_adjust,
+        price: item.price
       }))
     }));
 
