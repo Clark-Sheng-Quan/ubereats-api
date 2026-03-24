@@ -4,7 +4,6 @@
  */
 import express from "express";
 import axios from "axios";
-import { verifyTokenMiddleware } from "../services/tokenService.js";
 
 const router = express.Router();
 const POS_API_BASE = "https://dev.vend88.com";
@@ -38,11 +37,19 @@ router.post("/login", async (req, res) => {
     }
 });
 
-// Apply token verification middleware to all routes EXCEPT login
-router.use(verifyTokenMiddleware());
 router.post("/shops", async (req, res) => {
   try {
-    const token = req.token;
+    // Extract token from Authorization header
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
+
+    if (!token) {
+      return res.status(401).json({
+        status_code: 401,
+        success: false,
+        message: 'Token is required in Authorization header'
+      });
+    }
 
     const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
       token,
@@ -74,7 +81,17 @@ router.post("/shops", async (req, res) => {
 router.post("/shop/:shopId", async (req, res) => {
   try {
     const { shopId } = req.params;
-    const token = req.token;
+    // Extract token from Authorization header
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
+
+    if (!token) {
+      return res.status(401).json({
+        status_code: 401,
+        success: false,
+        message: 'Token is required in Authorization header'
+      });
+    }
 
     if (!shopId) {
       return res.status(400).json({
@@ -125,7 +142,9 @@ router.post("/shop/:shopId", async (req, res) => {
  */
 router.get('/products', async (req, res) => {
   try {
-    const token = req.token;
+    // Extract token from Authorization header
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
     const { business_id, page_size = '50', page_idx = '0' } = req.query;
     const pageSize = parseInt(page_size);
     const pageIdx = parseInt(page_idx);
@@ -206,7 +225,9 @@ router.get('/options', async (req, res) => {
     const { business_id, page_size = '50', page_idx = '0' } = req.query;
     const pageSize = parseInt(page_size);
     const pageIdx = parseInt(page_idx);
-    const token = req.token;
+    // Extract token from Authorization header
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
 
     if (!token) {
       return res.status(401).json({
@@ -288,7 +309,9 @@ router.get('/options', async (req, res) => {
  */
 router.post("/categories", async (req, res) => {
   try {
-    const token = req.token;
+    // Extract token from Authorization header
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
     const { shop_id } = req.body;
 
     if (!shop_id) {
