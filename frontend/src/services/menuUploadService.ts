@@ -412,14 +412,6 @@ export async function uploadVend88MenuToUber(params: UploadMenuParams): Promise<
 
   const vend88Config = buildVend88MenuConfig(allProducts, allOptions);
 
-  console.log(`\n[menuUploadService] Generated categories (before upload):`);
-  vend88Config.categories?.forEach((cat, idx) => {
-    console.log(`  [${idx}] ${cat.id}: "${cat.title?.translations?.en_us || '-'}" - ${cat.entities?.length || 0} items`);
-    if (cat.entities && cat.entities.length > 0 && idx < 3) {
-      console.log(`      Sample entities: ${JSON.stringify(cat.entities.slice(0, 3))}`);
-    }
-  });
-
   let menuToUpload: UberMenuConfig;
   if (mode === "replace") {
     menuToUpload = vend88Config;

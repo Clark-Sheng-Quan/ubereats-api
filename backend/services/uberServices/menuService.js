@@ -52,22 +52,6 @@ export async function getMenu(storeId, menuType = null) {
   }
 
   const data = await response.json();
-
-  console.log(`\n[menuService] Categories structure:`);
-  if (data.categories && Array.isArray(data.categories)) {
-    console.log(`   Total categories: ${data.categories.length}`);
-    data.categories.forEach((cat, idx) => {
-      console.log(`   [${idx}] ${cat.id}: "${cat.title?.translations?.en_us || '—'}" - ${cat.entities?.length || 0} items`);
-      if (cat.entities && cat.entities.length > 0 && idx < 3) {
-        console.log(`       Entities (raw): ${JSON.stringify(cat.entities.slice(0, 3))}`);
-        console.log(`       Entities (mapped): ${cat.entities.map((e) => `${e.id}(${e.type})`).join(", ")}`);
-      }
-    });
-  } else {
-    console.log(`   No categories found`);
-  }
-  
-  console.log(`\n[menuService] Items count: ${data.items?.length || 0}`);
   return data;
 }
 
@@ -149,8 +133,6 @@ export async function updateItem(storeId, itemId, updateData) {
     throw new Error("At least one field must be provided for update");
   }
 
-  console.log(`   Updating: ${updateFields.join(", ")}`);
-
   const response = await fetch(url, {
     method: "POST",
     headers: {
@@ -164,8 +146,6 @@ export async function updateItem(storeId, itemId, updateData) {
     const error = await response.text();
     throw new Error(`Failed to update item: ${response.status} ${error}`);
   }
-
-  console.log(`   ✅ Item updated successfully (204 No Content)`);
 }
 
 /**
