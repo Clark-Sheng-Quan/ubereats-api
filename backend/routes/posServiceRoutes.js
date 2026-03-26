@@ -101,7 +101,7 @@ router.post("/shop/:shopId", async (req, res) => {
       });
     }
 
-    console.log('[PosService] Getting shop details for:', shopId);
+    // console.log('[PosService] Getting shop details for:', shopId);
 
     // Call list_shop to get all shops and filter for the requested one
     const response = await axios.post(`${POS_API_BASE}/shop/list_shop`, {
@@ -157,7 +157,7 @@ router.get('/products', async (req, res) => {
       });
     }
 
-    console.log('[PosService] Fetching products - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
+    // console.log('[PosService] Fetching products - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
 
     const client = axios.create({
       baseURL: POS_API_BASE,
@@ -252,7 +252,7 @@ router.get('/options', async (req, res) => {
       });
     }
 
-    console.log('[PosService] Fetching options - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
+    // console.log('[PosService] Fetching options - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
 
     const client = axios.create({
       baseURL: POS_API_BASE,
@@ -331,7 +331,7 @@ router.post("/categories", async (req, res) => {
       });
     }
 
-    console.log('[PosService] Fetching categories for shop:', shop_id);
+    // console.log('[PosService] Fetching categories for shop:', shop_id);
 
     const client = axios.create({
       baseURL: POS_API_BASE,

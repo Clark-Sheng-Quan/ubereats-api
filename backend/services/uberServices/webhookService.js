@@ -2,13 +2,13 @@ import { log } from "node:console";
 import {
   UBER_API_BASE_URL,
   WEBHOOK_EVENTS,
-} from "../config/config.js";
-import { getAccessToken } from "../utils/tokenManager.js";
+} from "../../config/config.js";
+import { getAccessToken } from "../../utils/tokenManager.js";
 import { 
   saveOrderToStorage, 
   logWebhook, 
   logAction 
-} from "./localService.js";
+} from "../localService.js";
 
 /**
  * Handle incoming webhook events from Uber Eats

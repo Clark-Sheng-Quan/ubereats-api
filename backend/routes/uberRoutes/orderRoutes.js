@@ -5,7 +5,7 @@
  */
 
 import express from "express";
-import { STORE_ID } from "../config/config.js";
+import { STORE_ID } from "../../config/config.js";
 import {
   acceptOrder,
   denyOrder,
@@ -16,7 +16,7 @@ import {
   markOrderReady,
   adjustOrderPrice,
   updateOrderReadyTime,
-} from "../services/orderService.js";
+} from "../../services/uberServices/orderService.js";
 
 const router = express.Router();
 

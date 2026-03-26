@@ -12,7 +12,7 @@ import {
   getMenu,
   updateItem,
   uploadMenu,
-} from "../services/menuService.js";
+} from "../../services/uberServices/menuService.js";
 
 const router = express.Router();
 

@@ -10,6 +10,7 @@ interface Vend88Product {
   description?: string;
   calorie?: number;
   sku?: string;
+  category?: string | string[];
   image_url?: string;
   active?: boolean;
   options?: Array<{ _id?: string; id?: string; name?: string }>;
@@ -273,7 +274,52 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
 
   const allItems = [...baseItems, ...optionItems];
 
-  const vend88CategoryId = "vend88_category";
+  const categoryToItemIds = new Map<string, string[]>();
+  products.forEach((product) => {
+    const rawCategories = Array.isArray(product.category)
+      ? product.category
+      : product.category
+      ? [product.category]
+      : [];
+
+    const normalizedCategories = rawCategories
+      .map((name) => String(name || "").trim())
+      .filter((name) => name.length > 0);
+
+    if (normalizedCategories.length === 0) {
+      return;
+    }
+
+    normalizedCategories.forEach((categoryName) => {
+      const existing = categoryToItemIds.get(categoryName) || [];
+      existing.push(product._id);
+      categoryToItemIds.set(categoryName, existing);
+    });
+  });
+
+  const buildCategoryId = () => {
+    // Generate random 24-char hex ID like MongoDB ObjectId
+    let id = "";
+    for (let i = 0; i < 24; i++) {
+      id += Math.floor(Math.random() * 16).toString(16);
+    }
+    return id;
+  };
+
+  const generatedCategories = Array.from(categoryToItemIds.entries()).map(([categoryName, itemIds]) => ({
+    id: buildCategoryId(),
+    title: {
+      translations: {
+        en_us: categoryName,
+      },
+    },
+    entities: Array.from(new Set(itemIds)).map((id) => ({
+      id,
+      type: "ITEM",
+    })),
+  }));
+
+  const menuCategoryIds = generatedCategories.map((category) => category.id);
   const vend88MenuId = "vend88_menu";
 
   return {
@@ -315,23 +361,10 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
             time_periods: [{ start_time: "00:00", end_time: "23:59" }],
           },
         ],
-        category_ids: [vend88CategoryId],
+        category_ids: menuCategoryIds,
       },
     ],
-    categories: [
-      {
-        id: vend88CategoryId,
-        title: {
-          translations: {
-            en_us: "Vend88",
-          },
-        },
-        entities: baseItems.map((item) => ({
-          id: item.id,
-          type: "ITEM",
-        })),
-      },
-    ],
+    categories: generatedCategories,
     items: allItems,
     modifier_groups: modifierGroups,
   };
@@ -378,6 +411,14 @@ export async function uploadVend88MenuToUber(params: UploadMenuParams): Promise<
   ]);
 
   const vend88Config = buildVend88MenuConfig(allProducts, allOptions);
+
+  console.log(`\n[menuUploadService] Generated categories (before upload):`);
+  vend88Config.categories?.forEach((cat, idx) => {
+    console.log(`  [${idx}] ${cat.id}: "${cat.title?.translations?.en_us || '-'}" - ${cat.entities?.length || 0} items`);
+    if (cat.entities && cat.entities.length > 0 && idx < 3) {
+      console.log(`      Sample entities: ${JSON.stringify(cat.entities.slice(0, 3))}`);
+    }
+  });
 
   let menuToUpload: UberMenuConfig;
   if (mode === "replace") {

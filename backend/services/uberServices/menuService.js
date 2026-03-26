@@ -9,8 +9,8 @@
  */
 
 import fetch from "node-fetch";
-import { getAccessToken } from "../utils/tokenManager.js";
-import { UBER_API_BASE_URL as BASE_URL } from "../config/config.js";
+import { getAccessToken } from "../../utils/tokenManager.js";
+import { UBER_API_BASE_URL as BASE_URL } from "../../config/config.js";
 
 /**
  * Get Menu
@@ -52,13 +52,22 @@ export async function getMenu(storeId, menuType = null) {
   }
 
   const data = await response.json();
-  // console.log(`\n[menuService] Full response from Uber API:`);
-  // console.log(JSON.stringify(data, null, 2));
-  // console.log(`\n[menuService] Summary:`);
-  // console.log(`   Items count: ${data.items?.length || 0}`);
-  // console.log(`   Categories count: ${data.categories?.length || 0}`);
-  // console.log(`   Menus count: ${data.menus?.length || 0}`);
-  // console.log(`   Modifier groups count: ${data.modifier_groups?.length || 0}`);
+
+  console.log(`\n[menuService] Categories structure:`);
+  if (data.categories && Array.isArray(data.categories)) {
+    console.log(`   Total categories: ${data.categories.length}`);
+    data.categories.forEach((cat, idx) => {
+      console.log(`   [${idx}] ${cat.id}: "${cat.title?.translations?.en_us || '—'}" - ${cat.entities?.length || 0} items`);
+      if (cat.entities && cat.entities.length > 0 && idx < 3) {
+        console.log(`       Entities (raw): ${JSON.stringify(cat.entities.slice(0, 3))}`);
+        console.log(`       Entities (mapped): ${cat.entities.map((e) => `${e.id}(${e.type})`).join(", ")}`);
+      }
+    });
+  } else {
+    console.log(`   No categories found`);
+  }
+  
+  console.log(`\n[menuService] Items count: ${data.items?.length || 0}`);
   return data;
 }
 
@@ -185,10 +194,6 @@ export async function uploadMenu(storeId, menuConfig) {
   }
 
   console.log(`\n⬆️ Uploading menu for store: ${storeId}`);
-  console.log(`   Menus: ${menuConfig.menus?.length || 0}`);
-  console.log(`   Categories: ${menuConfig.categories?.length || 0}`);
-  console.log(`   Items: ${menuConfig.items?.length || 0}`);
-  console.log(`   Modifier Groups: ${menuConfig.modifier_groups?.length || 0}`);
 
   // Prepare request body
   const body = {

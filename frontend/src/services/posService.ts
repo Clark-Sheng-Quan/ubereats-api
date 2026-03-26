@@ -91,8 +91,7 @@ export async function getPosProducts(
       throw new Error("Business ID is required");
     }
 
-    console.log(`[PosService] Fetching products for business ${businessId}, page ${pageIdx}, size ${pageSize}`);
-
+   
     const response = await backendApi.get<ProductsResponse>(
       "/service/pos/products",
       {
@@ -113,8 +112,7 @@ export async function getPosProducts(
 
     const products = response.data.data.products || [];
     const maxPage = response.data.data?.max_page || 1;
-    console.log(`[PosService] Fetched page ${pageIdx}: ${products.length} products, max_page: ${maxPage}`);
-
+   
     return { products, max_page: maxPage };
   } catch (error: any) {
     console.error("[PosService] Get products error:", {
@@ -152,8 +150,7 @@ export async function getPosProductsCount(
       throw new Error("Business ID is required");
     }
 
-    console.log(`[PosService] Fetching product count for business ${businessId}`);
-
+    
     const response = await backendApi.get<ProductsResponse>(
       "/service/pos/products",
       {
@@ -173,8 +170,7 @@ export async function getPosProductsCount(
     }
 
     const totalCount = response.data.data?.max_page || 0;
-    console.log(`[PosService] Total product count: ${totalCount}`);
-
+    
     return totalCount;
   } catch (error: any) {
     console.error("[PosService] Get product count error:", {
@@ -208,8 +204,7 @@ export async function getPosOptions(
       throw new Error("Business ID is required");
     }
 
-    console.log(`[PosService] Fetching options for business ${businessId}, page ${pageIdx}, size ${pageSize}`);
-
+  
     const response = await backendApi.get<OptionsResponse>(
       "/service/pos/options",
       {
@@ -230,8 +225,7 @@ export async function getPosOptions(
 
     const options = response.data.data.options || [];
     const maxPage = response.data.data?.max_page || 1;
-    console.log(`[PosService] Fetched page ${pageIdx}: ${options.length} options, max_page: ${maxPage}`);
-
+    
     return { options, max_page: maxPage };
   } catch (error: any) {
     console.error("[PosService] Get options error:", {
@@ -269,8 +263,7 @@ export async function getPosOptionsCount(
       throw new Error("Business ID is required");
     }
 
-    console.log(`[PosService] Fetching option count for business ${businessId}`);
-
+    
     const response = await backendApi.get<OptionsResponse>(
       "/service/pos/options",
       {
@@ -290,8 +283,7 @@ export async function getPosOptionsCount(
     }
 
     const totalCount = response.data.data?.max_page || 0;
-    console.log(`[PosService] Total option count: ${totalCount}`);
-
+    
     return totalCount;
   } catch (error: any) {
     console.error("[PosService] Get option count error:", {

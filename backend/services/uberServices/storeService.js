@@ -3,8 +3,8 @@
  * Handles listing stores, getting details, and updating status
  */
 import fetch from "node-fetch";
-import { getAccessToken } from "../utils/tokenManager.js";
-import { UBER_API_BASE_URL as BASE_URL } from "../config/config.js";
+import { getAccessToken } from "../../utils/tokenManager.js";
+import { UBER_API_BASE_URL as BASE_URL } from "../../config/config.js";
 
 /**
  * Get a list of all stores authorized for this account

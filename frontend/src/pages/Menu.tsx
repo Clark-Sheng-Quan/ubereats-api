@@ -186,8 +186,7 @@ export default function MenuSyncPage() {
         return;
       }
 
-      console.log(`[MenuSync] Loading Vend88 products - page ${pageIdx}, size ${itemsPerPage}`);
-
+      
       const response = await getPosProducts(posToken, businessId, itemsPerPage, pageIdx);
       const products = response.products || [];
       const maxPage = response.max_page || 0;
@@ -195,8 +194,6 @@ export default function MenuSyncPage() {
       setVend88Items(products);
       setVend88CurrentPage(pageIdx);
       setVend88MaxPage(maxPage);
-
-      console.log(`[MenuSync] Vend88 loaded: ${products.length} products, max_page: ${maxPage}`);
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Vend88 products:", err.message);
     }
@@ -216,8 +213,6 @@ export default function MenuSyncPage() {
         return;
       }
 
-      console.log(`[MenuSync] Loading Vend88 options - page ${pageIdx}, size ${optionItemsPerPage}`);
-
       const response = await getPosOptions(posToken, businessId, optionItemsPerPage, pageIdx);
       const options = response.options || [];
       const maxPage = response.max_page || 0;
@@ -225,8 +220,6 @@ export default function MenuSyncPage() {
       setVend88Options(options);
       setOptionsCurrentPage(pageIdx);
       setOptionsMaxPage(maxPage);
-
-      console.log(`[MenuSync] Vend88 options loaded: ${options.length} options, max_page: ${maxPage}`);
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Vend88 options:", err.message);
     }
@@ -260,8 +253,7 @@ export default function MenuSyncPage() {
       const modifierGroups = uberMenuData?.modifier_groups || [];
       setUberOptions(modifierGroups);
       setUberOptionsCurrentPage(1);
-      console.log("[MenuSync] Loaded Uber options (modifier_groups):", modifierGroups.length);
-
+      
       // Load Vend88 products and options if businessId is available
       if (businessId) {
         try {
@@ -272,13 +264,11 @@ export default function MenuSyncPage() {
             // Get total product count first
             const totalCount = await getPosProductsCount(posToken, businessId);
             setVend88TotalCount(totalCount);
-            console.log("[MenuSync] Vend88 total product count:", totalCount);
-
+            
             // Get total options count
             const totalOptionsCount = await getPosOptionsCount(posToken, businessId);
             setOptionsTotalCount(totalOptionsCount);
-            console.log("[MenuSync] Vend88 total options count:", totalOptionsCount);
-
+          
             // Load first page of products and options directly
             await loadVend88Products(0);
             await loadVend88Options(0);
@@ -410,9 +400,38 @@ export default function MenuSyncPage() {
 
   // 获取未映射的 Uber 商品
   const getUnmappedUberItems = () => {
-    return getUberBaseItems().filter((item) =>
+    const baseItems = getUberBaseItems().filter((item) =>
       !mappings.some((m) => m.uberItemId === item.id)
     );
+
+    // Build reverse index: itemId -> categoryName
+    const itemToCategory = new Map<string, string>();
+    menuData?.categories?.forEach((category) => {
+      const categoryName = getText(category.title) || "";
+      category.entities?.forEach((entity) => {
+        if (!entity?.id) return;
+        if (entity.type && entity.type !== "ITEM") return;
+        itemToCategory.set(entity.id, categoryName);
+      });
+    });
+
+    // Sort items by category name, then by item name
+    return baseItems.sort((a, b) => {
+      const catA = itemToCategory.get(a.id) || "";
+      const catB = itemToCategory.get(b.id) || "";
+      
+      // Items without categories should be sorted last
+      if (catA === "" && catB !== "") return 1;
+      if (catB === "" && catA !== "") return -1;
+      
+      if (catA !== catB) {
+        return catA.localeCompare(catB);
+      }
+      
+      const nameA = getText(a.title) || "";
+      const nameB = getText(b.title) || "";
+      return nameA.localeCompare(nameB);
+    });
   };
 
   // 获取已映射的 Vend88 商品
@@ -470,12 +489,17 @@ export default function MenuSyncPage() {
   };
 
   // Helper function to get category name for an item
-  const getCategoryName = (): string => {
-    // 从menuData中获取第一个category的subtitle
-    if (menuData?.categories && menuData.categories.length > 0) {
-      return getText(menuData.categories[0].subtitle) || "—";
-    }
-    return "—";
+  const getCategoryForItem = (item: MenuItem): string => {
+    if (!menuData?.categories) return "—";
+    
+    const category = menuData.categories.find((cat) =>
+      cat.entities?.some((entity) => {
+        if (!entity?.id || entity.id !== item.id) return false;
+        return !entity.type || entity.type === "ITEM";
+      })
+    );
+    
+    return category ? (getText(category.title) || "—") : "—";
   };
 
   return (
@@ -734,7 +758,7 @@ export default function MenuSyncPage() {
                             {item.id}
                           </td>
                           <td className="px-6 py-3 w-40 text-sm text-gray-900">
-                            {getCategoryName()}
+                            {getCategoryForItem(item)}
                           </td>
                           <td className="px-6 py-3 w-48">
                             <div className="flex flex-wrap gap-2">

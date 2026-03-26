@@ -5,24 +5,24 @@
 
 import express from "express";
 import axios from "axios";
-import { uploadMenu, getMenu } from "../services/menuService.js";
+import { uploadMenu, getMenu } from "../../services/uberServices/menuService.js";
 import { 
   saveUberConnection, 
   getUberConnection, 
   deleteUberConnection, 
   saveSyncHistory, 
   getSyncHistory 
-} from "../services/localService.js";
+} from "../../services/localService.js";
 import {
   saveShopBinding,
   getShopBinding,
   deleteShopBinding,
-} from "../services/bindingService.js";
+} from "../../services/uberServices/bindingService.js";
 import {
   activateIntegration,
   removeIntegrationConfiguration,
-} from "../services/integrationService.js";
-import { UBER_CONFIG, UBER_API_BASE_URL } from "../config/config.js";
+} from "../../services/uberServices/integrationService.js";
+import { UBER_CONFIG, UBER_API_BASE_URL } from "../../config/config.js";
 
 const router = express.Router();
 

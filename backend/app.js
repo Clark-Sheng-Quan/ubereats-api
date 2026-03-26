@@ -7,12 +7,12 @@ if (!Object.hasOwn) {
 }
 
 import localRoutes from "./routes/localRoutes.js";
-import orderRoutes from "./routes/orderRoutes.js";
-import storeRoutes from "./routes/storeRoutes.js";
-import menuRoutes from "./routes/menuRoutes.js";
-import webhookRoutes from "./routes/webhookRoutes.js";
+import orderRoutes from "./routes/uberRoutes/orderRoutes.js";
+import storeRoutes from "./routes/uberRoutes/storeRoutes.js";
+import menuRoutes from "./routes/uberRoutes/menuRoutes.js";
+import webhookRoutes from "./routes/uberRoutes/webhookRoutes.js";
 import posServiceRoutes from "./routes/posServiceRoutes.js";
-import uberRoutes from "./routes/uberRoutes.js";
+import uberRoutes from "./routes/uberRoutes/uberRoutes.js";
 
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));

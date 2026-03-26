@@ -5,7 +5,7 @@
  */
 
 import axios from "axios";
-import { UBER_API_BASE_URL, INTEGRATOR_BRAND_ID } from "../config/config.js";
+import { UBER_API_BASE_URL, INTEGRATOR_BRAND_ID } from "../../config/config.js";
 
 /**
  * Activate Integration - Create or update POS data binding for a store

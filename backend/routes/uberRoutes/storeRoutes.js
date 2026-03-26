@@ -1,5 +1,5 @@
 import express from "express";
-import { getStores, getStoreDetails, updateStoreStatus, updateStorePrepTime, getStoreStatus, updateStoreInfo, updateFulfillmentConfig } from "../services/storeService.js";
+import { getStores, getStoreDetails, updateStoreStatus, updateStorePrepTime, getStoreStatus, updateStoreInfo, updateFulfillmentConfig } from "../../services/uberServices/storeService.js";
 
 const router = express.Router();
 

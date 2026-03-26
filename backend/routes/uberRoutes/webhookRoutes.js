@@ -6,8 +6,8 @@
 
 import express from "express";
 import crypto from "crypto";
-import { handleWebhookEvent } from "../services/webhookService.js";
-import { PRIMARY_KEY, SECONDARY_KEY } from "../config/config.js";
+import { handleWebhookEvent } from "../../services/uberServices/webhookService.js";
+import { PRIMARY_KEY, SECONDARY_KEY } from "../../config/config.js";
 
 const router = express.Router();
 
