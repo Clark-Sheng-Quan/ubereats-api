@@ -1,9 +1,20 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getStoreMenu } from "../services/uberService";
 import { getPosProducts, getPosProductsCount, getPosOptions, getPosOptionsCount } from "../services/posService";
 import { uploadVend88MenuToUber } from "../services/menuUploadService";
 import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X } from "lucide-react";
+import {
+  getAllMappings,
+  getLocalUberMenuSnapshot,
+  ItemMappingRecord,
+  OptionItemMappingRecord,
+  OptionMappingRecord,
+  saveItemMapping,
+  saveOptionItemMapping,
+  saveOptionMapping,
+  syncUberMenuSnapshot,
+} from "../services/mappingService";
+import { buildExactNamePairs, normalizeMappingName } from "../services/menuMappingService";
 
 interface MenuItem {
   id: string;
@@ -48,12 +59,17 @@ interface Vend88Item {
   options?: any[];
 }
 
-interface Mapping {
-  id: string;
-  vend88ItemId: string;
-  uberItemId: string;
-  vend88Item?: Vend88Item;
-  uberItem?: MenuItem;
+interface Vend88OptionItem {
+  _id: string;
+  name: string;
+  price_adjust?: number;
+  price?: number;
+}
+
+interface Vend88Option {
+  _id: string;
+  name: string;
+  option_items?: Vend88OptionItem[];
 }
 
 interface MenuEntity {
@@ -139,12 +155,7 @@ export default function MenuSyncPage() {
   const [vend88TotalCount, setVend88TotalCount] = useState(0);
   
   // Vend88 Options state
-  interface Option {
-    _id: string;
-    name: string;
-    option_items?: any[];
-  }
-  const [vend88Options, setVend88Options] = useState<Option[]>([]);
+  const [vend88Options, setVend88Options] = useState<Vend88Option[]>([]);
   const [optionsCurrentPage, setOptionsCurrentPage] = useState(0);
   const [optionsMaxPage, setOptionsMaxPage] = useState(0);
   const [optionsTotalCount, setOptionsTotalCount] = useState(0);
@@ -152,6 +163,7 @@ export default function MenuSyncPage() {
   
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncingUberCache, setSyncingUberCache] = useState(false);
   const [uploadingMenu, setUploadingMenu] = useState(false);
   const [showUploadModeModal, setShowUploadModeModal] = useState(false);
   const [error, setError] = useState("");
@@ -160,8 +172,24 @@ export default function MenuSyncPage() {
   const itemsPerPage = 15;
   const optionItemsPerPage = 50;
   
-  // 模拟映射数据（后续替换为API调用）
-  const [mappings] = useState<Mapping[]>([]);
+  const [itemMappings, setItemMappings] = useState<ItemMappingRecord[]>([]);
+  const [optionMappings, setOptionMappings] = useState<OptionMappingRecord[]>([]);
+  const [optionItemMappings, setOptionItemMappings] = useState<OptionItemMappingRecord[]>([]);
+  const [autoMapping, setAutoMapping] = useState(false);
+
+  const [showItemMapModal, setShowItemMapModal] = useState(false);
+  const [itemMapSource, setItemMapSource] = useState<{ type: "uber" | "vend88"; uberItem?: MenuItem; vendItem?: Vend88Item } | null>(null);
+  const [itemMapSearch, setItemMapSearch] = useState("");
+  const [itemModalUberPage, setItemModalUberPage] = useState(1);
+
+  const [showOptionMapModal, setShowOptionMapModal] = useState(false);
+  const [optionMapSource, setOptionMapSource] = useState<{ type: "uber" | "vend88"; uberOption?: ModifierGroup; vendOption?: Vend88Option } | null>(null);
+  const [optionMapSearch, setOptionMapSearch] = useState("");
+  const [optionMapStep, setOptionMapStep] = useState<"group" | "items">("group");
+  const [optionModalUberPage, setOptionModalUberPage] = useState(1);
+  const [selectedTargetOptionId, setSelectedTargetOptionId] = useState("");
+  const [optionItemSelections, setOptionItemSelections] = useState<Record<string, string>>({});
+  const [optionItemSearchByVendId, setOptionItemSearchByVendId] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!uberStoreId) {
@@ -238,50 +266,71 @@ export default function MenuSyncPage() {
   }, [optionsCurrentPage, businessId]);
 
   const loadData = async () => {
-    if (!uberStoreId) return;
+    if (!uberStoreId || !businessId) return;
 
     try {
       setLoading(true);
       setError("");
       setSuccess("");
 
-      // Load Uber menu
-      const uberMenuData = await getStoreMenu(uberStoreId);
+      // Load local cached Uber menu snapshot
+      const uberMenuData = await getLocalUberMenuSnapshot(businessId);
       setMenuData(uberMenuData);
+
+      const mappingData = await getAllMappings(businessId);
+      setItemMappings(mappingData.items || []);
+      setOptionMappings(mappingData.options || []);
+      setOptionItemMappings(mappingData.option_items || []);
       
       // Extract and set Uber modifier groups as options
       const modifierGroups = uberMenuData?.modifier_groups || [];
       setUberOptions(modifierGroups);
       setUberOptionsCurrentPage(1);
       
-      // Load Vend88 products and options if businessId is available
-      if (businessId) {
-        try {
-          const posToken = localStorage.getItem("posToken");
-          if (!posToken) {
-            console.warn("[MenuSync] No POS token found");
-          } else {
-            // Get total product count first
-            const totalCount = await getPosProductsCount(posToken, businessId);
-            setVend88TotalCount(totalCount);
-            
-            // Get total options count
-            const totalOptionsCount = await getPosOptionsCount(posToken, businessId);
-            setOptionsTotalCount(totalOptionsCount);
-          
-            // Load first page of products and options directly
-            await loadVend88Products(0);
-            await loadVend88Options(0);
-          }
-        } catch (err: any) {
-          console.error("[MenuSync] Failed to load Vend88 data:", err.message);
+      try {
+        const posToken = localStorage.getItem("posToken");
+        if (!posToken) {
+          console.warn("[MenuSync] No POS token found");
+        } else {
+          const totalCount = await getPosProductsCount(posToken, businessId);
+          setVend88TotalCount(totalCount);
+
+          const totalOptionsCount = await getPosOptionsCount(posToken, businessId);
+          setOptionsTotalCount(totalOptionsCount);
+
+          await loadVend88Products(0);
+          await loadVend88Options(0);
         }
+      } catch (err: any) {
+        console.error("[MenuSync] Failed to load Vend88 data:", err.message);
       }
     } catch (err: any) {
-      console.error("[MenuSync] Failed to load Uber menu:", err);
-      setError(err.response?.data?.error || err.message || "Failed to load menu");
+      console.error("[MenuSync] Failed to load menu data:", err);
+      setError(err.response?.data?.error || err.message || "Failed to load menu data");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSyncUberCache = async () => {
+    if (!uberStoreId || !businessId) {
+      setError("Missing store or business information");
+      return;
+    }
+
+    try {
+      setSyncingUberCache(true);
+      setError("");
+      setSuccess("");
+
+      await syncUberMenuSnapshot(businessId, uberStoreId);
+      await loadData();
+      setSuccess("Uber menu synced to local cache");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || "Failed to sync Uber cache");
+    } finally {
+      setSyncingUberCache(false);
     }
   };
 
@@ -391,17 +440,322 @@ export default function MenuSyncPage() {
     return groupIds.map((groupId) => getModifierGroupNameById(groupId));
   };
 
+  const openItemMapModalForUber = (uberItem: MenuItem) => {
+    setItemMapSource({ type: "uber", uberItem });
+    setItemMapSearch("");
+    setItemModalUberPage(1);
+    setShowItemMapModal(true);
+  };
+
+  const openItemMapModalForVend = (vendItem: Vend88Item) => {
+    setItemMapSource({ type: "vend88", vendItem });
+    setItemMapSearch("");
+    setItemModalUberPage(1);
+    setShowItemMapModal(true);
+  };
+
+  const closeItemMapModal = () => {
+    setShowItemMapModal(false);
+    setItemMapSource(null);
+    setItemMapSearch("");
+    setItemModalUberPage(1);
+  };
+
+  const openOptionMapModalForUber = (uberOption: ModifierGroup) => {
+    setOptionMapSource({ type: "uber", uberOption });
+    setOptionMapSearch("");
+    setOptionMapStep("group");
+    setSelectedTargetOptionId("");
+    setOptionItemSelections({});
+    setOptionItemSearchByVendId({});
+    setOptionModalUberPage(1);
+    setShowOptionMapModal(true);
+  };
+
+  const openOptionMapModalForVend = (vendOption: Vend88Option) => {
+    setOptionMapSource({ type: "vend88", vendOption });
+    setOptionMapSearch("");
+    setOptionMapStep("group");
+    setSelectedTargetOptionId("");
+    setOptionItemSelections({});
+    setOptionItemSearchByVendId({});
+    setOptionModalUberPage(1);
+    setShowOptionMapModal(true);
+  };
+
+  const closeOptionMapModal = () => {
+    setShowOptionMapModal(false);
+    setOptionMapSource(null);
+    setOptionMapSearch("");
+    setOptionMapStep("group");
+    setSelectedTargetOptionId("");
+    setOptionItemSelections({});
+    setOptionItemSearchByVendId({});
+    setOptionModalUberPage(1);
+  };
+
+  const getMappedItemRows = () => {
+    return itemMappings.map((mapping) => ({
+      ...mapping,
+      vend88Item: vend88Items.find((item) => item._id === mapping.pos_item_id),
+      uberItem: (menuData?.items || []).find((item) => item.id === mapping.uber_item_id),
+    }));
+  };
+
+  const handleConfirmItemMapping = async (targetId: string) => {
+    if (!businessId) return;
+
+    try {
+      if (!itemMapSource) {
+        return;
+      }
+
+      if (itemMapSource.type === "uber") {
+        const uberItem = itemMapSource.uberItem;
+        const vendItem = vend88Items.find((item) => item._id === targetId);
+
+        if (!uberItem || !vendItem) {
+          setError("Invalid item mapping selection");
+          return;
+        }
+
+        await saveItemMapping({
+          shop_id: businessId,
+          pos_item_id: vendItem._id,
+          pos_item_name: vendItem.name,
+          uber_item_id: uberItem.id,
+          uber_item_name: getText(uberItem.title),
+        });
+      } else {
+        const vendItem = itemMapSource.vendItem;
+        const uberItem = getUberBaseItems().find((item) => item.id === targetId);
+
+        if (!vendItem || !uberItem) {
+          setError("Invalid item mapping selection");
+          return;
+        }
+
+        await saveItemMapping({
+          shop_id: businessId,
+          pos_item_id: vendItem._id,
+          pos_item_name: vendItem.name,
+          uber_item_id: uberItem.id,
+          uber_item_name: getText(uberItem.title),
+        });
+      }
+
+      const mappingData = await getAllMappings(businessId);
+      setItemMappings(mappingData.items || []);
+      closeItemMapModal();
+      setSuccess("Item mapping saved");
+      setTimeout(() => setSuccess(""), 2500);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || "Failed to save item mapping");
+    }
+  };
+
+  const getUberOptionItemFromModifierOption = (modifierOptionId: string) => {
+    return (menuData?.items || []).find((item) => item.id === modifierOptionId);
+  };
+
+  const handleConfirmOptionGroupMapping = async () => {
+    if (!businessId) return;
+    if (!optionMapSource || !selectedTargetOptionId) {
+      setError("Please select a target option group");
+      return;
+    }
+
+    const sourceIsUber = optionMapSource.type === "uber";
+    const uberOption = sourceIsUber
+      ? optionMapSource.uberOption
+      : uberOptions.find((opt) => opt.id === selectedTargetOptionId);
+    const vendOption = sourceIsUber
+      ? vend88Options.find((opt) => opt._id === selectedTargetOptionId)
+      : optionMapSource.vendOption;
+
+    if (!uberOption || !vendOption) {
+      setError("Invalid option group selection");
+      return;
+    }
+
+    await saveOptionMapping({
+      shop_id: businessId,
+      pos_option_id: vendOption._id,
+      pos_option_name: vendOption.name,
+      uber_option_id: uberOption.id,
+      uber_option_name: getText(uberOption.title),
+    });
+
+    const defaultSelections: Record<string, string> = {};
+    const uberItems = (uberOption.modifier_options || [])
+      .map((opt) => ({
+        id: opt.id,
+        name: getText(getUberOptionItemFromModifierOption(opt.id)?.title),
+      }))
+      .filter((item) => item.id && item.name && item.name !== "—");
+
+    (vendOption.option_items || []).forEach((vendItem) => {
+      const matched = uberItems.find(
+        (uberItem) => normalizeMappingName(uberItem.name) === normalizeMappingName(vendItem.name)
+      );
+      if (matched) {
+        defaultSelections[vendItem._id] = matched.id;
+      }
+    });
+
+    setOptionItemSelections(defaultSelections);
+    setOptionMapStep("items");
+  };
+
+  const handleConfirmOptionItemMappings = async () => {
+    if (!businessId || !optionMapSource) return;
+
+    try {
+      const sourceIsUber = optionMapSource.type === "uber";
+      const uberOption = sourceIsUber
+        ? optionMapSource.uberOption
+        : uberOptions.find((opt) => opt.id === selectedTargetOptionId);
+      const vendOption = sourceIsUber
+        ? vend88Options.find((opt) => opt._id === selectedTargetOptionId)
+        : optionMapSource.vendOption;
+
+      if (!uberOption || !vendOption) {
+        setError("Invalid option group selection");
+        return;
+      }
+
+      for (const vendItem of vendOption.option_items || []) {
+        const selectedUberOptionItemId = optionItemSelections[vendItem._id];
+        if (!selectedUberOptionItemId) {
+          continue;
+        }
+
+        const uberItem = getUberOptionItemFromModifierOption(selectedUberOptionItemId);
+        await saveOptionItemMapping({
+          shop_id: businessId,
+          pos_option_id: vendOption._id,
+          pos_option_item_id: vendItem._id,
+          pos_option_item_name: vendItem.name,
+          uber_option_id: uberOption.id,
+          uber_option_item_id: selectedUberOptionItemId,
+          uber_option_item_name: getText(uberItem?.title),
+        });
+      }
+
+      const mappingData = await getAllMappings(businessId);
+      setOptionMappings(mappingData.options || []);
+      setOptionItemMappings(mappingData.option_items || []);
+      closeOptionMapModal();
+      setSuccess("Option mapping saved");
+      setTimeout(() => setSuccess(""), 2500);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || "Failed to save option mapping");
+    }
+  };
+
+  const handleAutoMapSameNames = async () => {
+    if (!businessId) return;
+
+    try {
+      setAutoMapping(true);
+
+      const usedPosItemIds = new Set(itemMappings.map((m) => m.pos_item_id));
+      const usedUberItemIds = new Set(itemMappings.map((m) => m.uber_item_id));
+
+      const itemPairs = buildExactNamePairs(
+        vend88Items.map((item) => ({ id: item._id, name: item.name })),
+        getUberBaseItems().map((item) => ({ id: item.id, name: getText(item.title) })),
+        usedPosItemIds,
+        usedUberItemIds
+      );
+
+      for (const pair of itemPairs) {
+        await saveItemMapping({
+          shop_id: businessId,
+          pos_item_id: pair.leftId,
+          pos_item_name: pair.name,
+          uber_item_id: pair.rightId,
+          uber_item_name: pair.name,
+        });
+      }
+
+      const usedPosOptionIds = new Set(optionMappings.map((m) => m.pos_option_id));
+      const usedUberOptionIds = new Set(optionMappings.map((m) => m.uber_option_id));
+      const optionPairs = buildExactNamePairs(
+        vend88Options.map((option) => ({ id: option._id, name: option.name })),
+        uberOptions.map((option) => ({ id: option.id, name: getText(option.title) })),
+        usedPosOptionIds,
+        usedUberOptionIds
+      );
+
+      for (const pair of optionPairs) {
+        await saveOptionMapping({
+          shop_id: businessId,
+          pos_option_id: pair.leftId,
+          pos_option_name: pair.name,
+          uber_option_id: pair.rightId,
+          uber_option_name: pair.name,
+        });
+
+        const vendOption = vend88Options.find((opt) => opt._id === pair.leftId);
+        const uberOption = uberOptions.find((opt) => opt.id === pair.rightId);
+        if (!vendOption || !uberOption) {
+          continue;
+        }
+
+        const uberItems = (uberOption.modifier_options || [])
+          .map((option) => ({
+            id: option.id,
+            name: getText(getUberOptionItemFromModifierOption(option.id)?.title),
+          }))
+          .filter((row) => row.id && row.name && row.name !== "—");
+
+        const usedPosOptionItemIds = new Set(optionItemMappings.map((m) => m.pos_option_item_id));
+        const usedUberOptionItemIds = new Set(optionItemMappings.map((m) => m.uber_option_item_id));
+        const optionItemPairs = buildExactNamePairs(
+          (vendOption.option_items || []).map((item) => ({ id: item._id, name: item.name })),
+          uberItems,
+          usedPosOptionItemIds,
+          usedUberOptionItemIds
+        );
+
+        for (const optionItemPair of optionItemPairs) {
+          await saveOptionItemMapping({
+            shop_id: businessId,
+            pos_option_id: vendOption._id,
+            pos_option_item_id: optionItemPair.leftId,
+            pos_option_item_name: optionItemPair.name,
+            uber_option_id: uberOption.id,
+            uber_option_item_id: optionItemPair.rightId,
+            uber_option_item_name: optionItemPair.name,
+          });
+        }
+      }
+
+      const mappingData = await getAllMappings(businessId);
+      setItemMappings(mappingData.items || []);
+      setOptionMappings(mappingData.options || []);
+      setOptionItemMappings(mappingData.option_items || []);
+      setSuccess("Auto mapping by exact name completed (current page)");
+      setTimeout(() => setSuccess(""), 3000);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || "Failed to auto map by name");
+    } finally {
+      setAutoMapping(false);
+    }
+  };
+
   // 获取已映射的 Uber 商品
   const getMappedUberItems = () => {
     return getUberBaseItems().filter((item) =>
-      mappings.some((m) => m.uberItemId === item.id)
+      itemMappings.some((m) => m.uber_item_id === item.id)
     );
   };
 
   // 获取未映射的 Uber 商品
   const getUnmappedUberItems = () => {
     const baseItems = getUberBaseItems().filter((item) =>
-      !mappings.some((m) => m.uberItemId === item.id)
+      !itemMappings.some((m) => m.uber_item_id === item.id)
     );
 
     // Build reverse index: itemId -> categoryName
@@ -437,14 +791,14 @@ export default function MenuSyncPage() {
   // 获取已映射的 Vend88 商品
   const getMappedVend88Items = () => {
     return vend88Items.filter((item) =>
-      mappings.some((m) => m.vend88ItemId === item._id)
+      itemMappings.some((m) => m.pos_item_id === item._id)
     );
   };
 
   // 获取未映射的 Vend88 商品
   const getUnmappedVend88Items = () => {
     return vend88Items.filter((item) =>
-      !mappings.some((m) => m.vend88ItemId === item._id)
+      !itemMappings.some((m) => m.pos_item_id === item._id)
     );
   };
 
@@ -502,6 +856,128 @@ export default function MenuSyncPage() {
     return category ? (getText(category.title) || "—") : "—";
   };
 
+  const mappedVendItemIds = new Set(itemMappings.map((m) => m.pos_item_id));
+  const mappedUberItemIds = new Set(itemMappings.map((m) => m.uber_item_id));
+  const mappedVendOptionIds = new Set(optionMappings.map((m) => m.pos_option_id));
+  const mappedUberOptionIds = new Set(optionMappings.map((m) => m.uber_option_id));
+
+  const filteredUberItemModalCandidates = (() => {
+    if (!itemMapSource || itemMapSource.type !== "vend88") {
+      return [] as Array<{ id: string; name: string; subtitle: string }>;
+    }
+
+    const keyword = normalizeMappingName(itemMapSearch);
+    return getUberBaseItems()
+      .filter((item) => !mappedUberItemIds.has(item.id))
+      .filter((item) => {
+        if (!keyword) return true;
+        return normalizeMappingName(getText(item.title)).includes(keyword);
+      })
+      .map((item) => ({
+        id: item.id,
+        name: getText(item.title),
+        subtitle: item.id,
+      }));
+  })();
+
+  const itemModalUberTotalPages = Math.max(1, Math.ceil(filteredUberItemModalCandidates.length / itemsPerPage));
+  const itemModalUberCandidatesPage = filteredUberItemModalCandidates.slice(
+    (itemModalUberPage - 1) * itemsPerPage,
+    itemModalUberPage * itemsPerPage
+  );
+
+  const itemModalCandidates = (() => {
+    if (!itemMapSource) {
+      return [] as Array<{ id: string; name: string; subtitle: string }>;
+    }
+
+    const keyword = normalizeMappingName(itemMapSearch);
+
+    if (itemMapSource.type === "uber") {
+      return vend88Items
+        .filter((item) => !mappedVendItemIds.has(item._id))
+        .filter((item) => {
+          if (!keyword) return true;
+          return normalizeMappingName(item.name).includes(keyword);
+        })
+        .map((item) => ({
+          id: item._id,
+          name: item.name,
+          subtitle: item.sku || item._id,
+        }));
+    }
+
+    return itemModalUberCandidatesPage;
+  })();
+
+  const filteredUberOptionModalCandidates = (() => {
+    if (!optionMapSource || optionMapSource.type !== "vend88") {
+      return [] as Array<{ id: string; name: string; subtitle: string }>;
+    }
+
+    const keyword = normalizeMappingName(optionMapSearch);
+    return uberOptions
+      .filter((option) => !mappedUberOptionIds.has(option.id))
+      .filter((option) => {
+        if (!keyword) return true;
+        return normalizeMappingName(getText(option.title)).includes(keyword);
+      })
+      .map((option) => ({
+        id: option.id,
+        name: getText(option.title),
+        subtitle: option.id,
+      }));
+  })();
+
+  const optionModalUberTotalPages = Math.max(1, Math.ceil(filteredUberOptionModalCandidates.length / optionItemsPerPage));
+  const optionModalUberCandidatesPage = filteredUberOptionModalCandidates.slice(
+    (optionModalUberPage - 1) * optionItemsPerPage,
+    optionModalUberPage * optionItemsPerPage
+  );
+
+  const optionModalCandidates = (() => {
+    if (!optionMapSource) {
+      return [] as Array<{ id: string; name: string; subtitle: string }>;
+    }
+
+    const keyword = normalizeMappingName(optionMapSearch);
+
+    if (optionMapSource.type === "uber") {
+      return vend88Options
+        .filter((option) => !mappedVendOptionIds.has(option._id))
+        .filter((option) => {
+          if (!keyword) return true;
+          return normalizeMappingName(option.name).includes(keyword);
+        })
+        .map((option) => ({
+          id: option._id,
+          name: option.name,
+          subtitle: option._id,
+        }));
+    }
+
+    return optionModalUberCandidatesPage;
+  })();
+
+  const selectedUberOptionForModal = optionMapSource
+    ? optionMapSource.type === "uber"
+      ? optionMapSource.uberOption
+      : uberOptions.find((option) => option.id === selectedTargetOptionId)
+    : undefined;
+
+  const selectedVendOptionForModal = optionMapSource
+    ? optionMapSource.type === "uber"
+      ? vend88Options.find((option) => option._id === selectedTargetOptionId)
+      : optionMapSource.vendOption
+    : undefined;
+
+  const uberOptionItemsForModal = (selectedUberOptionForModal?.modifier_options || [])
+    .map((option) => ({
+      id: option.id,
+      name: getText(getUberOptionItemFromModifierOption(option.id)?.title),
+    }))
+    .filter((item) => item.id && item.name && item.name !== "—");
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -523,16 +999,31 @@ export default function MenuSyncPage() {
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={handleRefresh}
-              disabled={refreshing || uploadingMenu}
+              onClick={handleAutoMapSameNames}
+              disabled={autoMapping || syncingUberCache || uploadingMenu || refreshing}
+              className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {autoMapping ? "Auto Mapping..." : "Auto Map Same Names"}
+            </button>
+            <button
+              onClick={handleSyncUberCache}
+              disabled={syncingUberCache || uploadingMenu || refreshing}
               className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded font-semibold hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
+              <RefreshCw className={`w-4 h-4 ${syncingUberCache ? "animate-spin" : ""}`} />
+              {syncingUberCache ? "Syncing..." : "Sync Uber Cache"}
+            </button>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing || uploadingMenu || syncingUberCache}
+              className="flex items-center gap-2 bg-gray-700 text-white px-4 py-2 rounded font-semibold hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-              {refreshing ? "Refreshing..." : "Refresh"}
+              {refreshing ? "Reloading..." : "Reload Local"}
             </button>
             <button
               onClick={() => setShowUploadModeModal(true)}
-              disabled={uploadingMenu || refreshing}
+              disabled={uploadingMenu || refreshing || syncingUberCache}
               className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded font-semibold hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {uploadingMenu ? "Uploading..." : "Upload Menu"}
@@ -603,7 +1094,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Option Mapped (0)
+                Option Mapped ({optionMappings.length})
               </button>
               <button
                 onClick={() => {
@@ -678,7 +1169,7 @@ export default function MenuSyncPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {mappings.map((mapping) => (
+                    {getMappedItemRows().map((mapping) => (
                       <tr key={mapping.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-3 flex-1 min-w-48">
                           <p className="text-sm font-semibold text-gray-900">{mapping.vend88Item?.name || "—"}</p>
@@ -688,7 +1179,7 @@ export default function MenuSyncPage() {
                         </td>
                         <td className="px-6 py-3 w-28">
                           <span className="text-xs text-gray-900 font-mono whitespace-nowrap">
-                            {mapping.vend88ItemId.slice(0, 12)}...
+                            {(mapping.pos_item_id || "").slice(0, 12)}...
                           </span>
                         </td>
                         <td className="px-6 py-3 flex-1 min-w-48">
@@ -703,7 +1194,7 @@ export default function MenuSyncPage() {
                         </td>
                         <td className="px-6 py-3 w-28">
                           <span className="text-xs text-gray-900 font-mono whitespace-nowrap">
-                            {mapping.uberItemId.slice(0, 12)}...
+                            {(mapping.uber_item_id || "").slice(0, 12)}...
                           </span>
                         </td>
                         <td className="px-6 py-3 w-24">
@@ -785,10 +1276,7 @@ export default function MenuSyncPage() {
                           </td>
                           <td className="px-6 py-3 w-30 text-center">
                             <button
-                              onClick={() => {
-                                // TODO: Open mapping modal with this Uber item
-                                setError("Mapping modal coming soon");
-                              }}
+                              onClick={() => openItemMapModalForUber(item)}
                               className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-1.5 rounded-full transition-colors"
                             >
                               Map
@@ -906,10 +1394,7 @@ export default function MenuSyncPage() {
                             </td>
                             <td className="px-6 py-3 w-30 text-center">
                               <button
-                                onClick={() => {
-                                  // TODO: Open mapping modal with this Vend88 item
-                                  setError("Mapping modal coming soon");
-                                }}
+                                onClick={() => openItemMapModalForVend(item)}
                                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-1.5 rounded-full transition-colors"
                               >
                                 Map
@@ -970,10 +1455,45 @@ export default function MenuSyncPage() {
         {/* Option Mapped Tab */}
         {activeSection === "options" && optionActiveTab === "option-mapped" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div className="px-6 py-12 text-center">
-              <p className="text-gray-600 font-semibold">No mapped options yet</p>
-              <p className="text-sm text-gray-500 mt-1">Map Vend88 options to Uber options to see them here</p>
-            </div>
+            {optionMappings.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="border-b border-gray-200 bg-gray-50">
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Vend88 Option</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Vend88 ID</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Uber Option</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Uber ID</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Mapped Option Items</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {optionMappings.map((mapping) => {
+                      const optionItemCount = optionItemMappings.filter(
+                        (itemMapping) =>
+                          itemMapping.pos_option_id === mapping.pos_option_id &&
+                          itemMapping.uber_option_id === mapping.uber_option_id
+                      ).length;
+
+                      return (
+                        <tr key={mapping.id} className="hover:bg-gray-50 transition-colors">
+                          <td className="px-6 py-3 text-sm font-semibold text-gray-900">{mapping.pos_option_name || "—"}</td>
+                          <td className="px-6 py-3 text-xs font-mono text-gray-900">{mapping.pos_option_id}</td>
+                          <td className="px-6 py-3 text-sm font-semibold text-gray-900">{mapping.uber_option_name || "—"}</td>
+                          <td className="px-6 py-3 text-xs font-mono text-gray-900">{mapping.uber_option_id}</td>
+                          <td className="px-6 py-3 text-sm text-gray-700">{optionItemCount}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="px-6 py-12 text-center">
+                <p className="text-gray-600 font-semibold">No mapped options yet</p>
+                <p className="text-sm text-gray-500 mt-1">Map Vend88 options to Uber options to see them here</p>
+              </div>
+            )}
           </div>
         )}
 
@@ -1033,10 +1553,7 @@ export default function MenuSyncPage() {
                           </td>
                           <td className="px-6 py-3 w-30 text-center">
                             <button
-                              onClick={() => {
-                                // TODO: Open mapping modal with this option
-                                setError("Uber option mapping coming soon");
-                              }}
+                              onClick={() => openOptionMapModalForUber(modifierGroup)}
                               className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-1.5 rounded-full transition-colors"
                             >
                               Map
@@ -1155,10 +1672,7 @@ export default function MenuSyncPage() {
                           </td>
                           <td className="px-6 py-3 w-30 text-center">
                             <button
-                              onClick={() => {
-                                // TODO: Open mapping modal with this option
-                                setError("Option mapping coming soon");
-                              }}
+                              onClick={() => openOptionMapModalForVend(option)}
                               className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-6 py-1.5 rounded-full transition-colors"
                             >
                               Map
@@ -1222,6 +1736,288 @@ export default function MenuSyncPage() {
           </div>
         )}
       </div>
+
+      {showItemMapModal && itemMapSource && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-2xl">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Manual Item Mapping</h2>
+              <button onClick={closeItemMapModal} className="text-gray-500 hover:text-gray-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="rounded border border-gray-200 p-3 bg-gray-50">
+                <p className="text-xs text-gray-600">Selected Source</p>
+                <p className="text-sm font-semibold text-gray-900">
+                  {itemMapSource.type === "uber"
+                    ? getText(itemMapSource.uberItem?.title)
+                    : itemMapSource.vendItem?.name || "—"}
+                </p>
+              </div>
+
+              <input
+                value={itemMapSearch}
+                onChange={(e) => setItemMapSearch(e.target.value)}
+                placeholder={
+                  itemMapSource.type === "uber"
+                    ? "Search Vend88 item name..."
+                    : "Search Uber item name..."
+                }
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              />
+
+              <div className="max-h-80 overflow-y-auto border border-gray-200 rounded divide-y divide-gray-100">
+                {itemModalCandidates.length > 0 ? (
+                  itemModalCandidates.map((candidate) => (
+                    <button
+                      key={candidate.id}
+                      onClick={() => handleConfirmItemMapping(candidate.id)}
+                      className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors"
+                    >
+                      <p className="text-sm font-semibold text-gray-900">{candidate.name}</p>
+                      <p className="text-xs text-gray-600 font-mono break-all">{candidate.subtitle}</p>
+                    </button>
+                  ))
+                ) : (
+                  <p className="px-4 py-8 text-sm text-gray-500 text-center">No available target items</p>
+                )}
+              </div>
+
+              {itemMapSource.type === "uber" && vend88MaxPage > 1 && (
+                <div className="flex items-center justify-between text-sm text-gray-700">
+                  <span>Vend88 page {vend88CurrentPage + 1} / {vend88MaxPage}</span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setVend88CurrentPage((prev) => Math.max(0, prev - 1))}
+                      disabled={vend88CurrentPage === 0}
+                      className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setVend88CurrentPage((prev) => Math.min(vend88MaxPage - 1, prev + 1))}
+                      disabled={vend88CurrentPage >= vend88MaxPage - 1}
+                      className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {itemMapSource.type === "vend88" && itemModalUberTotalPages > 1 && (
+                <div className="flex items-center justify-between text-sm text-gray-700">
+                  <span>Uber page {itemModalUberPage} / {itemModalUberTotalPages}</span>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setItemModalUberPage((prev) => Math.max(1, prev - 1))}
+                      disabled={itemModalUberPage === 1}
+                      className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setItemModalUberPage((prev) => Math.min(itemModalUberTotalPages, prev + 1))}
+                      disabled={itemModalUberPage >= itemModalUberTotalPages}
+                      className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showOptionMapModal && optionMapSource && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Manual Option Mapping</h2>
+              <button onClick={closeOptionMapModal} className="text-gray-500 hover:text-gray-700">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {optionMapStep === "group" && (
+              <div className="px-6 py-5 space-y-4">
+                <div className="rounded border border-gray-200 p-3 bg-gray-50">
+                  <p className="text-xs text-gray-600">Selected Source Option Group</p>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {optionMapSource.type === "uber"
+                      ? getText(optionMapSource.uberOption?.title)
+                      : optionMapSource.vendOption?.name || "—"}
+                  </p>
+                </div>
+
+                <input
+                  value={optionMapSearch}
+                  onChange={(e) => setOptionMapSearch(e.target.value)}
+                  placeholder={
+                    optionMapSource.type === "uber"
+                      ? "Search Vend88 option group..."
+                      : "Search Uber option group..."
+                  }
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+
+                <div className="max-h-80 overflow-y-auto border border-gray-200 rounded divide-y divide-gray-100">
+                  {optionModalCandidates.length > 0 ? (
+                    optionModalCandidates.map((candidate) => (
+                      <label key={candidate.id} className="flex items-start gap-3 px-4 py-3 hover:bg-blue-50 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="target-option-group"
+                          checked={selectedTargetOptionId === candidate.id}
+                          onChange={() => setSelectedTargetOptionId(candidate.id)}
+                          className="mt-1"
+                        />
+                        <div>
+                          <p className="text-sm font-semibold text-gray-900">{candidate.name}</p>
+                          <p className="text-xs text-gray-600 font-mono break-all">{candidate.subtitle}</p>
+                        </div>
+                      </label>
+                    ))
+                  ) : (
+                    <p className="px-4 py-8 text-sm text-gray-500 text-center">No available target option groups</p>
+                  )}
+                </div>
+
+                {optionMapSource.type === "uber" && optionsMaxPage > 1 && (
+                  <div className="flex items-center justify-between text-sm text-gray-700">
+                    <span>Vend88 option page {optionsCurrentPage + 1} / {optionsMaxPage}</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setOptionsCurrentPage((prev) => Math.max(0, prev - 1))}
+                        disabled={optionsCurrentPage === 0}
+                        className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => setOptionsCurrentPage((prev) => Math.min(optionsMaxPage - 1, prev + 1))}
+                        disabled={optionsCurrentPage >= optionsMaxPage - 1}
+                        className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {optionMapSource.type === "vend88" && optionModalUberTotalPages > 1 && (
+                  <div className="flex items-center justify-between text-sm text-gray-700">
+                    <span>Uber option page {optionModalUberPage} / {optionModalUberTotalPages}</span>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setOptionModalUberPage((prev) => Math.max(1, prev - 1))}
+                        disabled={optionModalUberPage === 1}
+                        className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                      >
+                        Previous
+                      </button>
+                      <button
+                        onClick={() => setOptionModalUberPage((prev) => Math.min(optionModalUberTotalPages, prev + 1))}
+                        disabled={optionModalUberPage >= optionModalUberTotalPages}
+                        className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleConfirmOptionGroupMapping}
+                    disabled={!selectedTargetOptionId}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-4 py-2 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next: Map Option Items
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {optionMapStep === "items" && selectedVendOptionForModal && selectedUberOptionForModal && (
+              <div className="px-6 py-5 space-y-4">
+                <div className="rounded border border-gray-200 p-3 bg-gray-50">
+                  <p className="text-sm text-gray-700">
+                    <span className="font-semibold">Option Group:</span> {selectedVendOptionForModal.name}{" -> "}{getText(selectedUberOptionForModal.title)}
+                  </p>
+                </div>
+
+                <div className="space-y-3">
+                  {(selectedVendOptionForModal.option_items || []).map((vendItem) => {
+                    const filterKeyword = normalizeMappingName(optionItemSearchByVendId[vendItem._id] || "");
+                    const filteredUberCandidates = uberOptionItemsForModal.filter((uberCandidate) => {
+                      if (!filterKeyword) {
+                        return true;
+                      }
+                      return normalizeMappingName(uberCandidate.name).includes(filterKeyword);
+                    });
+
+                    return (
+                      <div key={vendItem._id} className="border border-gray-200 rounded p-3">
+                        <p className="text-sm font-semibold text-gray-900">{vendItem.name}</p>
+                        <p className="text-xs text-gray-500 font-mono">{vendItem._id}</p>
+
+                        <input
+                          value={optionItemSearchByVendId[vendItem._id] || ""}
+                          onChange={(e) =>
+                            setOptionItemSearchByVendId((prev) => ({
+                              ...prev,
+                              [vendItem._id]: e.target.value,
+                            }))
+                          }
+                          placeholder="Search Uber option item name..."
+                          className="w-full mt-2 border border-gray-300 rounded px-3 py-2 text-sm"
+                        />
+
+                        <select
+                          value={optionItemSelections[vendItem._id] || ""}
+                          onChange={(e) =>
+                            setOptionItemSelections((prev) => ({
+                              ...prev,
+                              [vendItem._id]: e.target.value,
+                            }))
+                          }
+                          className="w-full mt-2 border border-gray-300 rounded px-3 py-2 text-sm"
+                        >
+                          <option value="">Skip mapping</option>
+                          {filteredUberCandidates.map((uberCandidate) => (
+                            <option key={uberCandidate.id} value={uberCandidate.id}>
+                              {uberCandidate.name} ({uberCandidate.id})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => setOptionMapStep("group")}
+                    className="px-4 py-2 border border-gray-300 rounded text-sm font-semibold text-gray-700 hover:bg-gray-100"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={handleConfirmOptionItemMappings}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-4 py-2 rounded"
+                  >
+                    Save Option Mapping
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {showUploadModeModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">

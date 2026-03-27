@@ -3,21 +3,15 @@
  * Handles token generation, caching, and automatic refresh
  */
 
-import fs from "fs";
-import path from "path";
-import { fileURLToPath } from "url";
 import {
   UBER_CONFIG,
   TOKEN_CONFIG,
 } from "../config/config.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { dbQuery } from "../db/client.js";
 
 const OAUTH_TOKEN_URL = UBER_CONFIG.TOKEN_URL;
 const TOKEN_SCOPE = "eats.order eats.store eats.store.status.write";
 const TOKEN_BUFFER_SECONDS = TOKEN_CONFIG.bufferSeconds; // From config
-const TOKEN_FILE = path.join(__dirname, "../data/oauth_token.json");
 
 // In-memory token cache
 let cachedToken = {
@@ -26,42 +20,56 @@ let cachedToken = {
 };
 
 /**
- * Load token from file on startup
+ * Load token from database on startup
  */
-function loadTokenFromFile() {
+async function loadTokenFromDb() {
   try {
-    if (fs.existsSync(TOKEN_FILE)) {
-      const data = fs.readFileSync(TOKEN_FILE, "utf8");
-      const token = JSON.parse(data);
-      
-      // Check if token is still valid (with buffer)
-      if (token.expiresAt > Date.now() + TOKEN_BUFFER_SECONDS * 1000) {
-        cachedToken = token;
-        console.log(`✅ Loaded valid token from cache, expires: ${new Date(cachedToken.expiresAt).toISOString()}`);
-        return true;
-      } else {
-        console.log("⚠️ Cached token expired, will fetch new one");
-        return false;
-      }
+    const { rows } = await dbQuery(
+      "SELECT access_token, expires_at FROM uber_oauth_tokens WHERE id = 1"
+    );
+
+    const token = rows[0];
+    if (!token?.access_token || !token?.expires_at) {
+      return false;
     }
+
+    const expiresAt = Number(token.expires_at);
+    if (expiresAt > Date.now() + TOKEN_BUFFER_SECONDS * 1000) {
+      cachedToken = {
+        accessToken: token.access_token,
+        expiresAt,
+      };
+      console.log(`✅ Loaded valid token from database cache, expires: ${new Date(cachedToken.expiresAt).toISOString()}`);
+      return true;
+    }
+
+    console.log("⚠️ Cached token expired, will fetch new one");
+    return false;
   } catch (error) {
-    console.error("Error loading token from file:", error.message);
+    console.error("Error loading token from database:", error.message);
   }
   return false;
 }
 
 /**
- * Save token to file for persistence across restarts
+ * Save token to database for persistence across restarts
  */
-function saveTokenToFile() {
+async function saveTokenToDb() {
   try {
-    const dir = path.dirname(TOKEN_FILE);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-    fs.writeFileSync(TOKEN_FILE, JSON.stringify(cachedToken, null, 2), "utf8");
+    await dbQuery(
+      `
+      INSERT INTO uber_oauth_tokens (id, access_token, expires_at, updated_at)
+      VALUES (1, $1, $2, NOW())
+      ON CONFLICT (id)
+      DO UPDATE SET
+        access_token = EXCLUDED.access_token,
+        expires_at = EXCLUDED.expires_at,
+        updated_at = NOW()
+      `,
+      [cachedToken.accessToken, cachedToken.expiresAt]
+    );
   } catch (error) {
-    console.error("Error saving token to file:", error.message);
+    console.error("Error saving token to database:", error.message);
   }
 }
 
@@ -71,9 +79,9 @@ function saveTokenToFile() {
  * @returns {Promise<string>} Valid access token
  */
 export async function getAccessToken() {
-  // Load from file on first call (when cachedToken is empty)
+  // Load from database on first call (when cachedToken is empty)
   if (!cachedToken.accessToken && !cachedToken.expiresAt) {
-    loadTokenFromFile();
+    await loadTokenFromDb();
   }
 
   // Check if cached token is still valid
@@ -121,7 +129,7 @@ async function fetchNewToken() {
       accessToken: data.access_token,
       expiresAt: Date.now() + data.expires_in * 1000,
     };
-    saveTokenToFile();
+    await saveTokenToDb();
 
     console.log(`   ✅ New token obtained, expires: ${new Date(cachedToken.expiresAt).toISOString()}`);
 
@@ -140,14 +148,9 @@ export function invalidateToken() {
     accessToken: null,
     expiresAt: null,
   };
-  // Also delete the file
-  try {
-    if (fs.existsSync(TOKEN_FILE)) {
-      fs.unlinkSync(TOKEN_FILE);
-    }
-  } catch (error) {
-    console.error("Error deleting token file:", error.message);
-  }
+  dbQuery("DELETE FROM uber_oauth_tokens WHERE id = 1").catch((error) => {
+    console.error("Error deleting token from database:", error.message);
+  });
   console.log("🗑️ Cached token invalidated");
 }
 

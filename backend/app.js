@@ -13,6 +13,8 @@ import menuRoutes from "./routes/uberRoutes/menuRoutes.js";
 import webhookRoutes from "./routes/uberRoutes/webhookRoutes.js";
 import posServiceRoutes from "./routes/posServiceRoutes.js";
 import uberRoutes from "./routes/uberRoutes/uberRoutes.js";
+import mappingRoutes from "./routes/mappingRoutes.js";
+import { initDatabase } from "./db/client.js";
 
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));
@@ -38,12 +40,15 @@ app.use("/api/store", storeRoutes);
 app.use("/api/menu", menuRoutes);
 app.use("/api/service/pos", posServiceRoutes);
 app.use("/api/uber", uberRoutes);
+app.use("/api/mapping", mappingRoutes);
 app.use("/ubereats", webhookRoutes);  // Uber webhooks at /ubereats/webhook
 
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+await initDatabase();
 
 app.listen(3000, () => {
   console.log("Listening for webhooks at: http://localhost:3000/ubereats/webhook");

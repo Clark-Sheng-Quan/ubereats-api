@@ -34,9 +34,6 @@ export async function getMenu(storeId, menuType = null) {
     url += `?menu_type=${menuType}`;
   }
 
-  console.log(`\n📋 Getting menu for store: ${storeId}`);
-  if (menuType) console.log(`   Menu type: ${menuType}`);
-
   const response = await fetch(url, {
     method: "GET",
     headers: {
@@ -82,7 +79,6 @@ export async function updateItem(storeId, itemId, updateData) {
   const url = `${BASE_URL}/v2/eats/stores/${storeId}/menus/items/${itemId}`;
 
   console.log(`\n✏️ Updating item: ${itemId}`);
-  console.log(`   Store: ${storeId}`);
 
   // Build request body with only provided fields (sparse update)
   const body = {};
@@ -195,7 +191,4 @@ export async function uploadMenu(storeId, menuConfig) {
   if (!response.ok) {
     const error = await response.text();
     throw new Error(`[menuService] Failed to upload menu: ${response.status} ${error}`);
-  }
-
-  console.log(`   ✅ Menu uploaded successfully (204 No Content)`);
-  console.log(`   [menuService] Use Get Menu endpoint to verify`);}
+  }}

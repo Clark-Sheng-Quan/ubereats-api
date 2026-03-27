@@ -388,15 +388,114 @@ function mergeById(current: any[] = [], incoming: any[] = []): any[] {
   return Array.from(merged.values());
 }
 
+function getCategoryName(category: any): string {
+  const translatedName = category?.title?.translations?.en_us;
+  const rawName = typeof translatedName === "string" ? translatedName : category?.title;
+  return String(rawName || "").trim().toLowerCase();
+}
+
+function remapCategoryIds(categoryIds: any, idRemap: Map<string, string>): any {
+  if (!Array.isArray(categoryIds)) {
+    return categoryIds;
+  }
+
+  return Array.from(
+    new Set(
+      categoryIds
+        .map((id) => {
+          const key = String(id || "");
+          return idRemap.get(key) || key;
+        })
+        .filter((id) => id.length > 0)
+    )
+  );
+}
+
 function mergeMenuConfigs(existing: UberMenuConfig, vend88Config: UberMenuConfig): UberMenuConfig {
-  const menus = mergeById(existing.menus || [], vend88Config.menus || []);
-  const categories = mergeById(existing.categories || [], vend88Config.categories || []);
+  const existingCategories = existing.categories || [];
+  const incomingCategories = vend88Config.categories || [];
+
+  const existingCategoryIdByName = new Map<string, string>();
+  existingCategories.forEach((category) => {
+    const categoryId = category?.id;
+    const name = getCategoryName(category);
+    if (categoryId && name) {
+      existingCategoryIdByName.set(name, categoryId);
+    }
+  });
+
+  const categoryIdRemap = new Map<string, string>();
+  const normalizedIncomingCategories = incomingCategories.map((category) => {
+    const incomingId = category?.id;
+    const name = getCategoryName(category);
+    const matchedExistingId = name ? existingCategoryIdByName.get(name) : undefined;
+    const resolvedId = matchedExistingId || incomingId;
+
+    if (incomingId && resolvedId) {
+      categoryIdRemap.set(incomingId, resolvedId);
+    }
+
+    return {
+      ...category,
+      id: resolvedId,
+    };
+  });
+
+  const mergedCategoriesById = new Map<string, any>();
+  [...existingCategories, ...normalizedIncomingCategories].forEach((category) => {
+    const categoryId = category?.id;
+    if (!categoryId) {
+      return;
+    }
+
+    const existingCategory = mergedCategoriesById.get(categoryId);
+    const entities = Array.isArray(category?.entities) ? category.entities : [];
+
+    if (!existingCategory) {
+      mergedCategoriesById.set(categoryId, {
+        ...category,
+        entities,
+      });
+      return;
+    }
+
+    const existingEntities = Array.isArray(existingCategory.entities) ? existingCategory.entities : [];
+    const mergedEntitiesById = new Map<string, any>();
+    [...existingEntities, ...entities].forEach((entity) => {
+      const entityId = entity?.id;
+      if (entityId) {
+        mergedEntitiesById.set(entityId, entity);
+      }
+    });
+
+    mergedCategoriesById.set(categoryId, {
+      ...existingCategory,
+      ...category,
+      entities: Array.from(mergedEntitiesById.values()),
+    });
+  });
+
+  const categories = Array.from(mergedCategoriesById.values());
+
+  const existingMenus = existing.menus || [];
+  const incomingMenus = vend88Config.menus || [];
+  const primaryExistingMenuId = existingMenus[0]?.id;
+  const normalizedIncomingMenus = incomingMenus.map((menu, index) => {
+    const shouldReuseExistingMenuId = Boolean(primaryExistingMenuId) && index === 0;
+    return {
+      ...menu,
+      id: shouldReuseExistingMenuId ? primaryExistingMenuId : menu?.id,
+      category_ids: remapCategoryIds(menu?.category_ids, categoryIdRemap),
+    };
+  });
+
+  const menus = mergeById(existingMenus, normalizedIncomingMenus);
   const items = mergeById(existing.items || [], vend88Config.items || []);
   const modifierGroups = mergeById(existing.modifier_groups || [], vend88Config.modifier_groups || []);
 
   return {
     menus,
-    categories,
+    categories, 
     items,
     modifier_groups: modifierGroups,
   };

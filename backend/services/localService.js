@@ -10,6 +10,7 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import { STORAGE_CONFIG } from "../config/config.js";
+import { dbQuery } from "../db/client.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -184,28 +185,41 @@ export function updateOrderStatus(orderId, status) {
  * Save Uber connection details for a shop
  * @param {Object} connectionData - Connection data
  */
-export function saveUberConnection(connectionData) {
+export async function saveUberConnection(connectionData) {
   try {
-    const file = path.join(dataDir, STORAGE_CONFIG.connectionsFile);
-    let connections = [];
-
-    if (fs.existsSync(file)) {
-      const content = fs.readFileSync(file, "utf8");
-      connections = content ? JSON.parse(content) : [];
-    }
-
-    // Find and update or add new connection
-    const existingIndex = connections.findIndex(
-      (c) => c.shop_id === connectionData.shop_id
+    await dbQuery(
+      `
+      INSERT INTO uber_connections_db (
+        shop_id,
+        uber_store_id,
+        uber_store_name,
+        access_token,
+        refresh_token,
+        expires_at,
+        connected_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      ON CONFLICT (shop_id)
+      DO UPDATE SET
+        uber_store_id = EXCLUDED.uber_store_id,
+        uber_store_name = EXCLUDED.uber_store_name,
+        access_token = EXCLUDED.access_token,
+        refresh_token = EXCLUDED.refresh_token,
+        expires_at = EXCLUDED.expires_at,
+        connected_at = EXCLUDED.connected_at,
+        updated_at = NOW()
+      `,
+      [
+        connectionData.shop_id,
+        connectionData.uber_store_id || null,
+        connectionData.uber_store_name || null,
+        connectionData.access_token || null,
+        connectionData.refresh_token || null,
+        connectionData.expires_at || null,
+        connectionData.connected_at || null,
+      ]
     );
-
-    if (existingIndex >= 0) {
-      connections[existingIndex] = { ...connections[existingIndex], ...connectionData };
-    } else {
-      connections.push(connectionData);
-    }
-
-    fs.writeFileSync(file, JSON.stringify(connections, null, 2), "utf8");
   } catch (error) {
     console.error("[localService] Error saving Uber connection:", error.message);
   }
@@ -216,15 +230,25 @@ export function saveUberConnection(connectionData) {
  * @param {string} shopId - Shop ID
  * @returns {Object|null} Connection data or null
  */
-export function getUberConnection(shopId) {
+export async function getUberConnection(shopId) {
   try {
-    const file = path.join(dataDir, STORAGE_CONFIG.connectionsFile);
-    if (fs.existsSync(file)) {
-      const content = fs.readFileSync(file, "utf8");
-      const connections = content ? JSON.parse(content) : [];
-      return connections.find((c) => c.shop_id === shopId) || null;
-    }
-    return null;
+    const { rows } = await dbQuery(
+      `
+      SELECT
+        shop_id,
+        uber_store_id,
+        uber_store_name,
+        access_token,
+        refresh_token,
+        expires_at,
+        connected_at
+      FROM uber_connections_db
+      WHERE shop_id = $1
+      LIMIT 1
+      `,
+      [shopId]
+    );
+    return rows[0] || null;
   } catch (error) {
     console.error("[localService] Error reading Uber connection:", error.message);
     return null;
@@ -235,15 +259,9 @@ export function getUberConnection(shopId) {
  * Delete Uber connection for a shop
  * @param {string} shopId - Shop ID
  */
-export function deleteUberConnection(shopId) {
+export async function deleteUberConnection(shopId) {
   try {
-    const file = path.join(dataDir, STORAGE_CONFIG.connectionsFile);
-    if (fs.existsSync(file)) {
-      const content = fs.readFileSync(file, "utf8");
-      let connections = content ? JSON.parse(content) : [];
-      connections = connections.filter((c) => c.shop_id !== shopId);
-      fs.writeFileSync(file, JSON.stringify(connections, null, 2), "utf8");
-    }
+    await dbQuery("DELETE FROM uber_connections_db WHERE shop_id = $1", [shopId]);
   } catch (error) {
     console.error("[localService] Error deleting Uber connection:", error.message);
   }
@@ -253,39 +271,37 @@ export function deleteUberConnection(shopId) {
  * Save menu sync history
  * @param {Object} syncData - Sync history data
  */
-export function saveSyncHistory(syncData) {
+export async function saveSyncHistory(syncData) {
   try {
-    const file = path.join(dataDir, STORAGE_CONFIG.syncFile);
-    let history = [];
+    const id = `sync_${Date.now()}`;
+    await dbQuery(
+      `
+      INSERT INTO sync_history_db (id, shop_id, status, message, details, created_at)
+      VALUES ($1, $2, $3, $4, $5::jsonb, NOW())
+      `,
+      [
+        id,
+        syncData.shop_id,
+        syncData.status || null,
+        syncData.message || null,
+        JSON.stringify(syncData || {}),
+      ]
+    );
 
-    if (fs.existsSync(file)) {
-      const content = fs.readFileSync(file, "utf8");
-      history = content ? JSON.parse(content) : [];
-    }
+    await dbQuery(
+      `
+      DELETE FROM sync_history_db
+      WHERE shop_id = $1
+        AND id NOT IN (
+          SELECT id FROM sync_history_db
+          WHERE shop_id = $1
+          ORDER BY created_at DESC
+          LIMIT 1000
+        )
+      `,
+      [syncData.shop_id]
+    );
 
-    history.push({
-      id: `sync_${Date.now()}`,
-      ...syncData,
-    });
-
-    // Keep only last 1000 sync records per shop
-    const byShop = {};
-    history.forEach((item) => {
-      if (!byShop[item.shop_id]) {
-        byShop[item.shop_id] = [];
-      }
-      byShop[item.shop_id].push(item);
-    });
-
-    history = [];
-    Object.values(byShop).forEach((items) => {
-      if (items.length > 1000) {
-        items = items.slice(-1000);
-      }
-      history.push(...items);
-    });
-
-    fs.writeFileSync(file, JSON.stringify(history, null, 2), "utf8");
     console.log(`[localService]✅ Sync history saved for shop ${syncData.shop_id}`);
   } catch (error) {
     console.error("[localService] Error saving sync history:", error.message);
@@ -297,15 +313,20 @@ export function saveSyncHistory(syncData) {
  * @param {string} shopId - Shop ID
  * @returns {Array} Sync history records
  */
-export function getSyncHistory(shopId) {
+export async function getSyncHistory(shopId) {
   try {
-    const file = path.join(dataDir, STORAGE_CONFIG.syncFile);
-    if (fs.existsSync(file)) {
-      const content = fs.readFileSync(file, "utf8");
-      const history = content ? JSON.parse(content) : [];
-      return history.filter((h) => h.shop_id === shopId).reverse();
-    }
-    return [];
+    const { rows } = await dbQuery(
+      `
+      SELECT details
+      FROM sync_history_db
+      WHERE shop_id = $1
+      ORDER BY created_at DESC
+      LIMIT 1000
+      `,
+      [shopId]
+    );
+
+    return rows.map((row) => row.details || {});
   } catch (error) {
     console.error("[localService] Error reading sync history:", error.message);
     return [];
