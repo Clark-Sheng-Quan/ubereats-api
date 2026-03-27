@@ -82,14 +82,29 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
   const menus = Array.isArray(menuConfig.menus) ? menuConfig.menus : [];
   const categories = Array.isArray(menuConfig.categories) ? menuConfig.categories : [];
   const modifierGroups = Array.isArray(menuConfig.modifier_groups) ? menuConfig.modifier_groups : [];
+  const optionItemIds = new Set(
+    modifierGroups
+      .flatMap((group) => (Array.isArray(group?.modifier_options) ? group.modifier_options : []))
+      .filter((option) => {
+        if (!option?.id) {
+          return false;
+        }
+        const type = String(option?.type || "ITEM").toUpperCase();
+        return type === "ITEM";
+      })
+      .map((option) => option.id)
+  );
   const itemToCategories = buildCategoryByItemId(menuConfig);
   const modifierGroupNames = buildModifierGroupNameById(menuConfig);
   const items = Array.isArray(menuConfig.items) ? menuConfig.items : [];
+  let baseItemCount = 0;
+  let optionItemCount = 0;
 
   await withDbTransaction(async (client) => {
     await client.query("DELETE FROM uber_menus_local WHERE shop_id = $1", [normalizedShopId]);
     await client.query("DELETE FROM uber_categories_local WHERE shop_id = $1", [normalizedShopId]);
     await client.query("DELETE FROM uber_items_local WHERE shop_id = $1", [normalizedShopId]);
+    await client.query("DELETE FROM uber_option_items_local WHERE shop_id = $1", [normalizedShopId]);
     await client.query("DELETE FROM uber_modifier_groups_local WHERE shop_id = $1", [normalizedShopId]);
 
     const insertMenuQuery = `
@@ -191,9 +206,38 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, NOW(), NOW())
     `;
 
+    const insertOptionItemQuery = `
+      INSERT INTO uber_option_items_local (
+        shop_id,
+        uber_item_id,
+        item_name,
+        price_minor,
+        status,
+        raw_item,
+        synced_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW(), NOW())
+    `;
+
     for (const item of items) {
       const uberItemId = normalizeText(item?.id);
       if (!uberItemId) {
+        continue;
+      }
+
+      const isOptionItem = optionItemIds.has(uberItemId);
+
+      if (isOptionItem) {
+        await client.query(insertOptionItemQuery, [
+          normalizedShopId,
+          uberItemId,
+          extractUberText(item?.title) || "Untitled Item",
+          resolvePriceMinor(item),
+          resolveStatus(item),
+          JSON.stringify(item || {}),
+        ]);
+        optionItemCount += 1;
         continue;
       }
 
@@ -217,13 +261,16 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
         resolveStatus(item),
         JSON.stringify(item || {}),
       ]);
+      baseItemCount += 1;
     }
   });
 
   return {
     menuCount: menus.length,
     categoryCount: categories.length,
-    itemCount: items.length,
+    itemCount: baseItemCount,
+    optionItemCount,
+    totalItemCount: items.length,
     modifierGroupCount: modifierGroups.length,
   };
 }
@@ -251,10 +298,12 @@ export async function listUberItems(shopId) {
   return rows;
 }
 
-export async function getUberMenuSnapshot(shopId) {
+export async function getUberMenuSnapshot(shopId, itemPage = 1, optionPage = 1, itemsPerPage = 15, optionItemsPerPage = 50) {
   const normalizedShopId = normalizeText(shopId);
+  const itemOffset = Math.max(0, (itemPage - 1) * itemsPerPage);
+  const optionOffset = Math.max(0, (optionPage - 1) * optionItemsPerPage);
 
-  const [menusResult, categoriesResult, itemsResult, modifierGroupsResult] = await Promise.all([
+  const [menusResult, categoriesResult, itemsCountResult, itemsResult, modifierGroupsResult, optionItemsCountResult, optionItemsResult] = await Promise.all([
     dbQuery(
       `SELECT raw_menu FROM uber_menus_local WHERE shop_id = $1 ORDER BY uber_menu_id ASC`,
       [normalizedShopId]
@@ -264,12 +313,46 @@ export async function getUberMenuSnapshot(shopId) {
       [normalizedShopId]
     ),
     dbQuery(
-      `SELECT raw_item FROM uber_items_local WHERE shop_id = $1 ORDER BY uber_item_id ASC`,
+      `
+      SELECT COUNT(*) as count
+      FROM uber_items_local ui
+      WHERE ui.shop_id = $1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM item_mappings im
+          WHERE im.shop_id = ui.shop_id
+            AND im.uber_item_id = ui.uber_item_id
+        )
+      `,
       [normalizedShopId]
+    ),
+    dbQuery(
+      `
+      SELECT ui.raw_item
+      FROM uber_items_local ui
+      WHERE ui.shop_id = $1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM item_mappings im
+          WHERE im.shop_id = ui.shop_id
+            AND im.uber_item_id = ui.uber_item_id
+        )
+      ORDER BY ui.uber_item_id ASC
+      LIMIT $2 OFFSET $3
+      `,
+      [normalizedShopId, itemsPerPage, itemOffset]
     ),
     dbQuery(
       `SELECT raw_modifier_group FROM uber_modifier_groups_local WHERE shop_id = $1 ORDER BY uber_modifier_group_id ASC`,
       [normalizedShopId]
+    ),
+    dbQuery(
+      `SELECT COUNT(*) as count FROM uber_option_items_local WHERE shop_id = $1`,
+      [normalizedShopId]
+    ),
+    dbQuery(
+      `SELECT raw_item FROM uber_option_items_local WHERE shop_id = $1 ORDER BY uber_item_id ASC LIMIT $2 OFFSET $3`,
+      [normalizedShopId, optionItemsPerPage, optionOffset]
     ),
   ]);
 
@@ -277,12 +360,33 @@ export async function getUberMenuSnapshot(shopId) {
   const categories = categoriesResult.rows.map((row) => row.raw_category || {});
   const items = itemsResult.rows.map((row) => row.raw_item || {});
   const modifier_groups = modifierGroupsResult.rows.map((row) => row.raw_modifier_group || {});
+  const option_items = optionItemsResult.rows.map((row) => row.raw_item || {});
+
+  const itemsTotalCount = parseInt(itemsCountResult.rows[0]?.count || 0, 10);
+  const optionItemsTotalCount = parseInt(optionItemsCountResult.rows[0]?.count || 0, 10);
+  const itemsTotalPages = Math.ceil(itemsTotalCount / itemsPerPage) || 1;
+  const optionItemsTotalPages = Math.ceil(optionItemsTotalCount / optionItemsPerPage) || 1;
 
   return {
     menus,
     categories,
     items,
     modifier_groups,
+    option_items,
+    pagination: {
+      items: {
+        page: itemPage,
+        per_page: itemsPerPage,
+        total_count: itemsTotalCount,
+        total_pages: itemsTotalPages,
+      },
+      option_items: {
+        page: optionPage,
+        per_page: optionItemsPerPage,
+        total_count: optionItemsTotalCount,
+        total_pages: optionItemsTotalPages,
+      },
+    },
   };
 }
 

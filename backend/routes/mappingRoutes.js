@@ -53,7 +53,12 @@ router.get("/uber-menu/local", async (req, res) => {
       return res.status(400).json({ success: false, message: "shop_id is required" });
     }
 
-    const data = await getUberMenuSnapshot(shopId);
+    const itemPage = Math.max(1, parseInt(req.query.item_page || "1", 10));
+    const optionPage = Math.max(1, parseInt(req.query.option_page || "1", 10));
+    const itemsPerPage = parseInt(req.query.items_per_page || "15", 10);
+    const optionItemsPerPage = parseInt(req.query.option_items_per_page || "50", 10);
+
+    const data = await getUberMenuSnapshot(shopId, itemPage, optionPage, itemsPerPage, optionItemsPerPage);
     res.json({ success: true, data });
   } catch (error) {
     console.error("[mappingRoutes] Failed to get local Uber menu snapshot:", error.message);

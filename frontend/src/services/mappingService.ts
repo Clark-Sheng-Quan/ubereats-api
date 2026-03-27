@@ -59,6 +59,21 @@ export interface LocalUberMenuSnapshot {
   categories: any[];
   items: any[];
   modifier_groups: any[];
+  option_items?: any[];
+  pagination?: {
+    items: {
+      page: number;
+      per_page: number;
+      total_count: number;
+      total_pages: number;
+    };
+    option_items: {
+      page: number;
+      per_page: number;
+      total_count: number;
+      total_pages: number;
+    };
+  };
 }
 
 export async function syncUberMenuSnapshot(shopId: string, storeId: string) {
@@ -70,9 +85,21 @@ export async function syncUberMenuSnapshot(shopId: string, storeId: string) {
   return response.data;
 }
 
-export async function getLocalUberMenuSnapshot(shopId: string): Promise<LocalUberMenuSnapshot> {
+export async function getLocalUberMenuSnapshot(
+  shopId: string,
+  itemPage: number = 1,
+  optionPage: number = 1,
+  itemsPerPage: number = 15,
+  optionItemsPerPage: number = 50
+): Promise<LocalUberMenuSnapshot> {
   const response = await backendApi.get("/mapping/uber-menu/local", {
-    params: { shop_id: shopId },
+    params: {
+      shop_id: shopId,
+      item_page: itemPage,
+      option_page: optionPage,
+      items_per_page: itemsPerPage,
+      option_items_per_page: optionItemsPerPage,
+    },
   });
 
   return response.data?.data || {
@@ -80,6 +107,11 @@ export async function getLocalUberMenuSnapshot(shopId: string): Promise<LocalUbe
     categories: [],
     items: [],
     modifier_groups: [],
+    option_items: [],
+    pagination: {
+      items: { page: 1, per_page: itemsPerPage, total_count: 0, total_pages: 1 },
+      option_items: { page: 1, per_page: optionItemsPerPage, total_count: 0, total_pages: 1 },
+    },
   };
 }
 

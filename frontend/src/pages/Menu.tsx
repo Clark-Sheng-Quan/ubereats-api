@@ -125,6 +125,7 @@ interface MenuData {
   categories?: MenuCategory[];
   items?: MenuItem[];
   modifier_groups?: any[];
+  option_items?: MenuItem[];
 }
 
 type ItemTabType = "item-mapped" | "item-unmapped-uber" | "item-unmapped-vend88";
@@ -144,6 +145,22 @@ export default function MenuSyncPage() {
   const [activeSection, setActiveSection] = useState<"items" | "options">("items");
   
   const [menuData, setMenuData] = useState<MenuData | null>(null);
+  
+  // Uber backend pagination state
+  const [uberBackendPagedItems, setUberBackendPagedItems] = useState<MenuItem[]>([]);
+  const [uberBackendPagedOptions, setUberBackendPagedOptions] = useState<ModifierGroup[]>([]);
+  const [uberItemsPagination, setUberItemsPagination] = useState({
+    page: 1,
+    per_page: 15,
+    total_count: 0,
+    total_pages: 1,
+  });
+  const [uberOptionsPagination, setUberOptionsPagination] = useState({
+    page: 1,
+    per_page: 50,
+    total_count: 0,
+    total_pages: 1,
+  });
   
   // Uber Options state
   const [uberOptions, setUberOptions] = useState<ModifierGroup[]>([]);
@@ -176,6 +193,7 @@ export default function MenuSyncPage() {
   const [optionMappings, setOptionMappings] = useState<OptionMappingRecord[]>([]);
   const [optionItemMappings, setOptionItemMappings] = useState<OptionItemMappingRecord[]>([]);
   const [autoMapping, setAutoMapping] = useState(false);
+  const [locallyMappedPosItemIds, setLocallyMappedPosItemIds] = useState<Set<string>>(new Set());
 
   const [showItemMapModal, setShowItemMapModal] = useState(false);
   const [itemMapSource, setItemMapSource] = useState<{ type: "uber" | "vend88"; uberItem?: MenuItem; vendItem?: Vend88Item } | null>(null);
@@ -191,6 +209,7 @@ export default function MenuSyncPage() {
   const [optionItemSelections, setOptionItemSelections] = useState<Record<string, string>>({});
   const [optionItemSearchByVendId, setOptionItemSearchByVendId] = useState<Record<string, string>>({});
 
+  // Load initial data only when component mounts or store/business changes
   useEffect(() => {
     if (!uberStoreId) {
       navigate("/shops");
@@ -199,6 +218,34 @@ export default function MenuSyncPage() {
 
     loadData();
   }, [uberStoreId, businessId, navigate]);
+
+  // Only reload current page items when pagination changes (no need to reload mappings)
+  useEffect(() => {
+    if (!businessId || !uberStoreId || !menuData) return;
+
+    // Only load the current page of items, don't reload mappings or Vend88 data
+    const loadPagedItems = async () => {
+      try {
+        const uberMenuData = await getLocalUberMenuSnapshot(
+          businessId,
+          uberCurrentPage,
+          uberOptionsCurrentPage,
+          15,
+          50
+        );
+        setUberBackendPagedItems(uberMenuData.items || []);
+        setUberBackendPagedOptions(uberMenuData.modifier_groups || []);
+        if (uberMenuData.pagination) {
+          setUberItemsPagination(uberMenuData.pagination.items);
+          setUberOptionsPagination(uberMenuData.pagination.option_items);
+        }
+      } catch (err: any) {
+        console.error("[MenuSync] Failed to load paged items:", err.message);
+      }
+    };
+
+    loadPagedItems();
+  }, [uberCurrentPage, uberOptionsCurrentPage, businessId, uberStoreId, menuData]);
 
   // Load Vend88 products with pagination
   const loadVend88Products = async (pageIdx: number = 0) => {
@@ -273,19 +320,28 @@ export default function MenuSyncPage() {
       setError("");
       setSuccess("");
 
-      // Load local cached Uber menu snapshot
-      const uberMenuData = await getLocalUberMenuSnapshot(businessId);
+      // Load local cached Uber menu snapshot with pagination
+      const uberMenuData = await getLocalUberMenuSnapshot(businessId, uberCurrentPage, uberOptionsCurrentPage, 15, 50);
       setMenuData(uberMenuData);
+      
+      // Store backend-paged items and options
+      setUberBackendPagedItems(uberMenuData.items || []);
+      setUberBackendPagedOptions(uberMenuData.modifier_groups || []);
+      
+      // Store pagination metadata
+      if (uberMenuData.pagination) {
+        setUberItemsPagination(uberMenuData.pagination.items);
+        setUberOptionsPagination(uberMenuData.pagination.option_items);
+      }
+      
+      // Extract and set Uber modifier groups as options (for mapping UI)
+      const modifierGroups = uberMenuData?.modifier_groups || [];
+      setUberOptions(modifierGroups);
 
       const mappingData = await getAllMappings(businessId);
       setItemMappings(mappingData.items || []);
       setOptionMappings(mappingData.options || []);
       setOptionItemMappings(mappingData.option_items || []);
-      
-      // Extract and set Uber modifier groups as options
-      const modifierGroups = uberMenuData?.modifier_groups || [];
-      setUberOptions(modifierGroups);
-      setUberOptionsCurrentPage(1);
       
       try {
         const posToken = localStorage.getItem("posToken");
@@ -408,13 +464,13 @@ export default function MenuSyncPage() {
   };
 
   const getUberItemNameById = (itemId: string) => {
-    const item = (menuData?.items || []).find((it) => it.id === itemId);
+    const item = [...(menuData?.items || []), ...(menuData?.option_items || [])].find((it) => it.id === itemId);
     if (!item) return "—";
     return getText(item.title);
   };
 
   const getUberItemPriceById = (itemId: string) => {
-    const item = (menuData?.items || []).find((it) => it.id === itemId);
+    const item = [...(menuData?.items || []), ...(menuData?.option_items || [])].find((it) => it.id === itemId);
     if (!item) return "—";
     const cents = item.price_info?.price;
     if (typeof cents !== "number") return "—";
@@ -497,10 +553,12 @@ export default function MenuSyncPage() {
   const getMappedItemRows = () => {
     return itemMappings.map((mapping) => ({
       ...mapping,
-      vend88Item: vend88Items.find((item) => item._id === mapping.pos_item_id),
-      uberItem: (menuData?.items || []).find((item) => item.id === mapping.uber_item_id),
+      vend88Item: vend88Items.find((item) => item._id === mapping.pos_item_id || item.id === mapping.pos_item_id),
+      uberItem: [...(menuData?.items || []), ...(menuData?.option_items || [])].find((item) => item.id === mapping.uber_item_id),
     }));
   };
+
+  const mappedItemRows = getMappedItemRows();
 
   const handleConfirmItemMapping = async (targetId: string) => {
     if (!businessId) return;
@@ -509,6 +567,8 @@ export default function MenuSyncPage() {
       if (!itemMapSource) {
         return;
       }
+
+      let mappedPosItemId = "";
 
       if (itemMapSource.type === "uber") {
         const uberItem = itemMapSource.uberItem;
@@ -526,6 +586,8 @@ export default function MenuSyncPage() {
           uber_item_id: uberItem.id,
           uber_item_name: getText(uberItem.title),
         });
+
+        mappedPosItemId = String(vendItem._id || "").trim();
       } else {
         const vendItem = itemMapSource.vendItem;
         const uberItem = getUberBaseItems().find((item) => item.id === targetId);
@@ -542,10 +604,35 @@ export default function MenuSyncPage() {
           uber_item_id: uberItem.id,
           uber_item_name: getText(uberItem.title),
         });
+
+        mappedPosItemId = String(vendItem._id || "").trim();
       }
 
-      const mappingData = await getAllMappings(businessId);
+      // Optimistically hide freshly mapped records from current-page unmapped lists.
+      if (mappedPosItemId) {
+        setLocallyMappedPosItemIds((prev) => {
+          const next = new Set(prev);
+          next.add(mappedPosItemId);
+          return next;
+        });
+        setVend88Items((prev) =>
+          prev.filter((item) => {
+            const primaryId = String(item._id || "").trim();
+            const secondaryId = String(item.id || "").trim();
+            return primaryId !== mappedPosItemId && secondaryId !== mappedPosItemId;
+          })
+        );
+      }
+
+      const [mappingData, uberMenuData] = await Promise.all([
+        getAllMappings(businessId),
+        getLocalUberMenuSnapshot(businessId, uberCurrentPage, uberOptionsCurrentPage, 15, 50),
+      ]);
       setItemMappings(mappingData.items || []);
+      setUberBackendPagedItems(uberMenuData.items || []);
+      if (uberMenuData.pagination) {
+        setUberItemsPagination(uberMenuData.pagination.items);
+      }
       closeItemMapModal();
       setSuccess("Item mapping saved");
       setTimeout(() => setSuccess(""), 2500);
@@ -555,7 +642,7 @@ export default function MenuSyncPage() {
   };
 
   const getUberOptionItemFromModifierOption = (modifierOptionId: string) => {
-    return (menuData?.items || []).find((item) => item.id === modifierOptionId);
+    return [...(menuData?.items || []), ...(menuData?.option_items || [])].find((item) => item.id === modifierOptionId);
   };
 
   const handleConfirmOptionGroupMapping = async () => {
@@ -745,68 +832,48 @@ export default function MenuSyncPage() {
     }
   };
 
-  // 获取已映射的 Uber 商品
+  const mappedPosItemIds = new Set(
+    itemMappings
+      .map((m) => String(m.pos_item_id || "").trim())
+      .filter((id) => id.length > 0)
+  );
+  const mappedUberItemIds = new Set(
+    itemMappings
+      .map((m) => String(m.uber_item_id || "").trim())
+      .filter((id) => id.length > 0)
+  );
+
+  const effectiveMappedPosItemIds = new Set([
+    ...Array.from(mappedPosItemIds),
+    ...Array.from(locallyMappedPosItemIds),
+  ]);
+
+  const isVendItemMapped = (item: Vend88Item) => {
+    const primaryId = String(item._id || "").trim();
+    const secondaryId = String(item.id || "").trim();
+    return (
+      effectiveMappedPosItemIds.has(primaryId) ||
+      (secondaryId ? effectiveMappedPosItemIds.has(secondaryId) : false)
+    );
+  };
+
+  // 获取已映射的 Uber 商品 (based on all mappings, not just current page items)
   const getMappedUberItems = () => {
-    return getUberBaseItems().filter((item) =>
-      itemMappings.some((m) => m.uber_item_id === item.id)
-    );
+    return mappedUberItemIds.size;
   };
 
-  // 获取未映射的 Uber 商品
-  const getUnmappedUberItems = () => {
-    const baseItems = getUberBaseItems().filter((item) =>
-      !itemMappings.some((m) => m.uber_item_id === item.id)
-    );
-
-    // Build reverse index: itemId -> categoryName
-    const itemToCategory = new Map<string, string>();
-    menuData?.categories?.forEach((category) => {
-      const categoryName = getText(category.title) || "";
-      category.entities?.forEach((entity) => {
-        if (!entity?.id) return;
-        if (entity.type && entity.type !== "ITEM") return;
-        itemToCategory.set(entity.id, categoryName);
-      });
-    });
-
-    // Sort items by category name, then by item name
-    return baseItems.sort((a, b) => {
-      const catA = itemToCategory.get(a.id) || "";
-      const catB = itemToCategory.get(b.id) || "";
-      
-      // Items without categories should be sorted last
-      if (catA === "" && catB !== "") return 1;
-      if (catB === "" && catA !== "") return -1;
-      
-      if (catA !== catB) {
-        return catA.localeCompare(catB);
-      }
-      
-      const nameA = getText(a.title) || "";
-      const nameB = getText(b.title) || "";
-      return nameA.localeCompare(nameB);
-    });
-  };
-
-  // 获取已映射的 Vend88 商品
-  const getMappedVend88Items = () => {
-    return vend88Items.filter((item) =>
-      itemMappings.some((m) => m.pos_item_id === item._id)
-    );
+  const getUnmappedUberCount = () => {
+    return uberItemsPagination.total_count;
   };
 
   // 获取未映射的 Vend88 商品
   const getUnmappedVend88Items = () => {
-    return vend88Items.filter((item) =>
-      !itemMappings.some((m) => m.pos_item_id === item._id)
-    );
+    return vend88Items.filter((item) => !isVendItemMapped(item));
   };
 
   // Pagination helper functions
   const getPaginatedUberItems = () => {
-    const items = getUnmappedUberItems();
-    const startIndex = (uberCurrentPage - 1) * itemsPerPage;
-    return items.slice(startIndex, startIndex + itemsPerPage);
+    return uberBackendPagedItems;
   };
 
   const getPaginatedVend88Items = () => {
@@ -814,13 +881,13 @@ export default function MenuSyncPage() {
     return getUnmappedVend88Items();
   };
 
-  const getUberTotalPages = () => Math.ceil(getUnmappedUberItems().length / itemsPerPage);
+  const getUberTotalPages = () => uberItemsPagination.total_pages;
   const getPaginatedUberOptions = () => {
-    const startIndex = (uberOptionsCurrentPage - 1) * optionItemsPerPage;
-    return uberOptions.slice(startIndex, startIndex + optionItemsPerPage);
+    // Use backend-paged options directly (already filtered by backend pagination)
+    return uberBackendPagedOptions;
   };
 
-  const getUberOptionsTotalPages = () => Math.ceil(uberOptions.length / optionItemsPerPage);
+  const getUberOptionsTotalPages = () => uberOptionsPagination.total_pages;
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -856,8 +923,7 @@ export default function MenuSyncPage() {
     return category ? (getText(category.title) || "—") : "—";
   };
 
-  const mappedVendItemIds = new Set(itemMappings.map((m) => m.pos_item_id));
-  const mappedUberItemIds = new Set(itemMappings.map((m) => m.uber_item_id));
+  const mappedVendItemIds = mappedPosItemIds;
   const mappedVendOptionIds = new Set(optionMappings.map((m) => m.pos_option_id));
   const mappedUberOptionIds = new Set(optionMappings.map((m) => m.uber_option_id));
 
@@ -993,7 +1059,7 @@ export default function MenuSyncPage() {
             <div>
               <h1 className="text-2xl font-bold text-black">Uber Menu Mapping</h1>
               <p className="text-sm text-gray-600 mt-1">
-                Mapped: {getMappedUberItems().length} | Uber: {getUnmappedUberItems().length} | Vend88: {getUnmappedVend88Items().length}
+                Mapped: {getMappedUberItems()} | Uber: {getUnmappedUberCount()} | Vend88: {Math.max(0, vend88TotalCount - itemMappings.length)}
               </p>
             </div>
           </div>
@@ -1049,7 +1115,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Item Mapped ({getMappedUberItems().length})
+                Item Mapped ({getMappedUberItems()})
               </button>
               <button
                 onClick={() => {
@@ -1062,7 +1128,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Uber Items ({getUnmappedUberItems().length})
+                Uber Items ({getUnmappedUberCount()})
               </button>
               <button
                 onClick={() => {
@@ -1075,7 +1141,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Vend88 Items ({vend88TotalCount > 0 ? vend88TotalCount : 0})
+                Vend88 Items ({Math.max(0, vend88TotalCount - itemMappings.length)})
               </button>
             </div>
           </div>
@@ -1156,7 +1222,7 @@ export default function MenuSyncPage() {
         {/* Tab Content - Items Section */}
         {activeSection === "items" && itemActiveTab === "item-mapped" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            {getMappedVend88Items().length > 0 ? (
+            {mappedItemRows.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full">
                   <thead>
@@ -1169,10 +1235,10 @@ export default function MenuSyncPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
-                    {getMappedItemRows().map((mapping) => (
+                    {mappedItemRows.map((mapping) => (
                       <tr key={mapping.id} className="hover:bg-gray-50 transition-colors">
                         <td className="px-6 py-3 flex-1 min-w-48">
-                          <p className="text-sm font-semibold text-gray-900">{mapping.vend88Item?.name || "—"}</p>
+                          <p className="text-sm font-semibold text-gray-900">{mapping.vend88Item?.name || mapping.pos_item_name || "—"}</p>
                           {mapping.vend88Item?.sku && (
                             <p className="text-xs text-gray-600">SKU: {mapping.vend88Item.sku}</p>
                           )}
@@ -1184,7 +1250,7 @@ export default function MenuSyncPage() {
                         </td>
                         <td className="px-6 py-3 flex-1 min-w-48">
                           <p className="text-sm font-semibold text-gray-900">
-                            {getText(mapping.uberItem?.title) || "—"}
+                            {mapping.uberItem ? getText(mapping.uberItem.title) : (mapping.uber_item_name || "—")}
                           </p>
                           {mapping.uberItem?.price_info && (
                             <p className="text-xs text-gray-600">
@@ -1224,7 +1290,7 @@ export default function MenuSyncPage() {
 
         {activeSection === "items" && itemActiveTab === "item-unmapped-uber" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            {getUnmappedUberItems().length > 0 ? (
+            {getUnmappedUberCount() > 0 ? (
               <>
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -1290,7 +1356,7 @@ export default function MenuSyncPage() {
                 {getUberTotalPages() > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
                     <div className="text-sm text-gray-600">
-                      Page {uberCurrentPage} of {getUberTotalPages()} · {getUnmappedUberItems().length} items
+                      Page {uberCurrentPage} of {getUberTotalPages()} · {getUnmappedUberCount()} items
                     </div>
                     <div className="flex gap-2">
                       <button

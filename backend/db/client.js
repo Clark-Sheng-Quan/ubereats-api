@@ -92,6 +92,19 @@ const schemaQueries = [
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (shop_id, uber_item_id)
   )`,
+  `CREATE TABLE IF NOT EXISTS uber_option_items_local (
+    id BIGSERIAL PRIMARY KEY,
+    shop_id TEXT NOT NULL,
+    uber_item_id TEXT NOT NULL,
+    item_name TEXT NOT NULL,
+    price_minor INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'ACTIVE',
+    raw_item JSONB NOT NULL DEFAULT '{}'::jsonb,
+    synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (shop_id, uber_item_id)
+  )`,
   `CREATE TABLE IF NOT EXISTS uber_modifier_groups_local (
     id BIGSERIAL PRIMARY KEY,
     shop_id TEXT NOT NULL,
@@ -145,6 +158,7 @@ const schemaQueries = [
   "CREATE INDEX IF NOT EXISTS idx_uber_menus_local_shop_id ON uber_menus_local (shop_id)",
   "CREATE INDEX IF NOT EXISTS idx_uber_categories_local_shop_id ON uber_categories_local (shop_id)",
   "CREATE INDEX IF NOT EXISTS idx_uber_items_local_shop_id ON uber_items_local (shop_id)",
+  "CREATE INDEX IF NOT EXISTS idx_uber_option_items_local_shop_id ON uber_option_items_local (shop_id)",
   "CREATE INDEX IF NOT EXISTS idx_uber_modifier_groups_local_shop_id ON uber_modifier_groups_local (shop_id)",
   "CREATE INDEX IF NOT EXISTS idx_uber_connections_db_shop_id ON uber_connections_db (shop_id)",
   "CREATE INDEX IF NOT EXISTS idx_shop_bindings_db_pos_shop_id ON shop_bindings_db (pos_shop_id)",
