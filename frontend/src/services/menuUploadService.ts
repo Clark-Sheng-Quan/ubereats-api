@@ -1,4 +1,4 @@
-import { getPosProducts, getPosProductsCount, getPosOptions, getPosOptionsCount } from "./posService";
+import { getPosProducts, getPosProductsCount, getPosOptions } from "./posService";
 import { getStoreMenu, uploadMenu } from "./uberService";
 
 export type UploadMode = "replace" | "merge";
@@ -103,43 +103,9 @@ async function fetchAllVend88Products(token: string, businessId: string): Promis
 }
 
 async function fetchAllVend88Options(token: string, businessId: string): Promise<Vend88Option[]> {
-  const pageSize = 100;
-  const expectedTotal = await getPosOptionsCount(token, businessId);
-  const allOptions: Vend88Option[] = [];
-  const seenIds = new Set<string>();
-
-  for (let pageIdx = 0; pageIdx < 1000; pageIdx++) {
-    const page = await getPosOptions(token, businessId, pageSize, pageIdx);
-    const pageItems = page.options || [];
-
-    if (pageItems.length === 0) {
-      break;
-    }
-
-    let newItemsInThisPage = 0;
-    pageItems.forEach((item) => {
-      if (!item?._id || seenIds.has(item._id)) {
-        return;
-      }
-      seenIds.add(item._id);
-      allOptions.push(item);
-      newItemsInThisPage += 1;
-    });
-
-    if (newItemsInThisPage === 0) {
-      break;
-    }
-
-    if (expectedTotal > 0 && allOptions.length >= expectedTotal) {
-      break;
-    }
-
-    if (pageItems.length < pageSize) {
-      break;
-    }
-  }
-
-  return allOptions;
+  // Backend now returns all options in a single response (no pagination)
+  const response = await getPosOptions(token, businessId, 10000, 0);
+  return response.options || [];
 }
 
 function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[]): UberMenuConfig {
@@ -206,6 +172,15 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
         return {
           id: mappedItemId,
           type: "ITEM",
+          title: {
+            translations: {
+              en_us: item.name || "Option Item",
+            },
+          },
+          price_info: {
+            price: toMinorUnitInt(item.price_adjust ?? item.price ?? 0),
+            overrides: [],
+          },
         };
       })
       .filter(Boolean),

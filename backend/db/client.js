@@ -136,11 +136,20 @@ const schemaQueries = [
     pos_option_name TEXT,
     uber_option_id TEXT NOT NULL,
     uber_option_name TEXT,
+    vend88_item_count INTEGER NOT NULL DEFAULT 0,
+    uber_item_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (shop_id, pos_option_id),
     UNIQUE (shop_id, uber_option_id)
   )`,
+  // Migration: Add missing columns to existing tables
+  `ALTER TABLE IF EXISTS option_mappings ADD COLUMN IF NOT EXISTS vend88_item_count INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS option_mappings ADD COLUMN IF NOT EXISTS uber_item_count INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE IF EXISTS item_mappings ADD COLUMN IF NOT EXISTS pos_item_price NUMERIC`,
+  `ALTER TABLE IF EXISTS item_mappings ADD COLUMN IF NOT EXISTS pos_item_options JSONB`,
+  `ALTER TABLE IF EXISTS item_mappings ADD COLUMN IF NOT EXISTS uber_item_price NUMERIC`,
+  `ALTER TABLE IF EXISTS item_mappings ADD COLUMN IF NOT EXISTS uber_item_options JSONB`,
   `CREATE TABLE IF NOT EXISTS option_item_mappings (
     id BIGSERIAL PRIMARY KEY,
     shop_id TEXT NOT NULL,

@@ -1,10 +1,13 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getPosProducts, getPosProductsCount, getPosOptions, getPosOptionsCount } from "../services/posService";
+import { getPosProducts, getPosProductsCount, getPosOptions } from "../services/posService";
 import { uploadVend88MenuToUber } from "../services/menuUploadService";
 import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X } from "lucide-react";
 import {
+  deleteItemMapping,
+  deleteOptionMapping,
   getAllMappings,
+  getLocalUberItems,
   getLocalUberMenuSnapshot,
   ItemMappingRecord,
   OptionItemMappingRecord,
@@ -14,7 +17,7 @@ import {
   saveOptionMapping,
   syncUberMenuSnapshot,
 } from "../services/mappingService";
-import { buildExactNamePairs, normalizeMappingName } from "../services/menuMappingService";
+import { buildExactNamePairs, buildOptionPairs, normalizeMappingName } from "../services/menuMappingService";
 
 interface MenuItem {
   id: string;
@@ -182,6 +185,8 @@ export default function MenuSyncPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [syncingUberCache, setSyncingUberCache] = useState(false);
   const [uploadingMenu, setUploadingMenu] = useState(false);
+  const [loadingVend88Products, setLoadingVend88Products] = useState(false);
+  const [loadingUberPagination, setLoadingUberPagination] = useState(false);
   const [showUploadModeModal, setShowUploadModeModal] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -194,11 +199,15 @@ export default function MenuSyncPage() {
   const [optionItemMappings, setOptionItemMappings] = useState<OptionItemMappingRecord[]>([]);
   const [autoMapping, setAutoMapping] = useState(false);
   const [locallyMappedPosItemIds, setLocallyMappedPosItemIds] = useState<Set<string>>(new Set());
+  const [expandedOptionMappingIds, setExpandedOptionMappingIds] = useState<Set<number>>(new Set());
 
   const [showItemMapModal, setShowItemMapModal] = useState(false);
   const [itemMapSource, setItemMapSource] = useState<{ type: "uber" | "vend88"; uberItem?: MenuItem; vendItem?: Vend88Item } | null>(null);
   const [itemMapSearch, setItemMapSearch] = useState("");
   const [itemModalUberPage, setItemModalUberPage] = useState(1);
+  const [itemModalUberCandidates, setItemModalUberCandidates] = useState<Array<{ id: string; name: string; subtitle: string }>>([]);
+  const [itemModalUberCandidatesRaw, setItemModalUberCandidatesRaw] = useState<MenuItem[]>([]);
+  const [itemModalUberTotalPages, setItemModalUberTotalPages] = useState(1);
 
   const [showOptionMapModal, setShowOptionMapModal] = useState(false);
   const [optionMapSource, setOptionMapSource] = useState<{ type: "uber" | "vend88"; uberOption?: ModifierGroup; vendOption?: Vend88Option } | null>(null);
@@ -250,6 +259,7 @@ export default function MenuSyncPage() {
   // Load Vend88 products with pagination
   const loadVend88Products = async (pageIdx: number = 0) => {
     try {
+      setLoadingVend88Products(true);
       const posToken = localStorage.getItem("posToken");
       if (!posToken) {
         console.warn("[MenuSync] No POS token found");
@@ -271,6 +281,8 @@ export default function MenuSyncPage() {
       setVend88MaxPage(maxPage);
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Vend88 products:", err.message);
+    } finally {
+      setLoadingVend88Products(false);
     }
   };
 
@@ -288,13 +300,14 @@ export default function MenuSyncPage() {
         return;
       }
 
-      const response = await getPosOptions(posToken, businessId, optionItemsPerPage, pageIdx);
+      // Fetch all options in a single request (backend now returns all)
+      const response = await getPosOptions(posToken, businessId, 10000, 0);
       const options = response.options || [];
-      const maxPage = response.max_page || 0;
 
       setVend88Options(options);
-      setOptionsCurrentPage(pageIdx);
-      setOptionsMaxPage(maxPage);
+      setOptionsCurrentPage(0);
+      setOptionsMaxPage(1);
+      setOptionsTotalCount(options.length);
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Vend88 options:", err.message);
     }
@@ -311,6 +324,52 @@ export default function MenuSyncPage() {
     if (!businessId) return;
     loadVend88Options(optionsCurrentPage);
   }, [optionsCurrentPage, businessId]);
+
+  // Clear Uber pagination loading state when page changes
+  useEffect(() => {
+    if (loadingUberPagination) {
+      const timer = setTimeout(() => {
+        setLoadingUberPagination(false);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [uberCurrentPage, loadingUberPagination]);
+
+  useEffect(() => {
+    if (!showItemMapModal || !itemMapSource || itemMapSource.type !== "vend88" || !businessId) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        const uberMenuData = await getLocalUberMenuSnapshot(
+          businessId,
+          itemModalUberPage,
+          1,
+          itemsPerPage,
+          optionItemsPerPage,
+          itemMapSearch
+        );
+
+        const candidates = (uberMenuData.items || []).map((item) => ({
+          id: item.id,
+          name: getText(item.title),
+          subtitle: item.id,
+        }));
+
+        setItemModalUberCandidates(candidates);
+        setItemModalUberCandidatesRaw(uberMenuData.items || []);
+        setItemModalUberTotalPages(uberMenuData.pagination?.items?.total_pages || 1);
+      } catch (err: any) {
+        console.error("[MenuSync] Failed to search Uber items:", err.message);
+        setItemModalUberCandidates([]);
+        setItemModalUberCandidatesRaw([]);
+        setItemModalUberTotalPages(1);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [showItemMapModal, itemMapSource, businessId, itemModalUberPage, itemMapSearch, itemsPerPage, optionItemsPerPage]);
 
   const loadData = async () => {
     if (!uberStoreId || !businessId) return;
@@ -350,9 +409,6 @@ export default function MenuSyncPage() {
         } else {
           const totalCount = await getPosProductsCount(posToken, businessId);
           setVend88TotalCount(totalCount);
-
-          const totalOptionsCount = await getPosOptionsCount(posToken, businessId);
-          setOptionsTotalCount(totalOptionsCount);
 
           await loadVend88Products(0);
           await loadVend88Options(0);
@@ -446,23 +502,6 @@ export default function MenuSyncPage() {
     }
   };
 
-  const getUberModifierOptionItemIds = () => {
-    const modifierItemIds = new Set<string>();
-    (uberOptions || []).forEach((group) => {
-      (group.modifier_options || []).forEach((option) => {
-        if (option?.type === "ITEM" && option.id) {
-          modifierItemIds.add(option.id);
-        }
-      });
-    });
-    return modifierItemIds;
-  };
-
-  const getUberBaseItems = () => {
-    const modifierItemIds = getUberModifierOptionItemIds();
-    return (menuData?.items || []).filter((item) => !modifierItemIds.has(item.id));
-  };
-
   const getUberItemNameById = (itemId: string) => {
     const item = [...(menuData?.items || []), ...(menuData?.option_items || [])].find((it) => it.id === itemId);
     if (!item) return "—";
@@ -496,6 +535,55 @@ export default function MenuSyncPage() {
     return groupIds.map((groupId) => getModifierGroupNameById(groupId));
   };
 
+  const getUberOptionGroupNamesFromStoredIds = (rawIds: unknown) => {
+    let groupIds: string[] = [];
+
+    if (Array.isArray(rawIds)) {
+      groupIds = rawIds.filter((id): id is string => typeof id === "string");
+    } else if (typeof rawIds === "string") {
+      try {
+        const parsed = JSON.parse(rawIds);
+        if (Array.isArray(parsed)) {
+          groupIds = parsed.filter((id): id is string => typeof id === "string");
+        }
+      } catch {
+        groupIds = [];
+      }
+    }
+
+    return groupIds;
+  };
+
+  const getVend88OptionNamesFromStoredOptions = (rawOptions: unknown) => {
+    let options: any[] = [];
+
+    if (Array.isArray(rawOptions)) {
+      options = rawOptions;
+    } else if (typeof rawOptions === "string") {
+      try {
+        const parsed = JSON.parse(rawOptions);
+        if (Array.isArray(parsed)) {
+          options = parsed;
+        }
+      } catch {
+        options = [];
+      }
+    }
+
+    return options
+      .map((opt: any) => {
+        if (typeof opt === "string") return opt;
+        return opt?.name || opt?.title || "";
+      })
+      .filter(Boolean);
+  };
+
+  const formatUberDisplayPriceFromMinor = (rawPrice: unknown) => {
+    const value = Number(rawPrice);
+    if (!Number.isFinite(value)) return "—";
+    return `$${(value / 100).toFixed(2)}`;
+  };
+
   const openItemMapModalForUber = (uberItem: MenuItem) => {
     setItemMapSource({ type: "uber", uberItem });
     setItemMapSearch("");
@@ -515,6 +603,7 @@ export default function MenuSyncPage() {
     setItemMapSource(null);
     setItemMapSearch("");
     setItemModalUberPage(1);
+    setItemModalUberCandidatesRaw([]);
   };
 
   const openOptionMapModalForUber = (uberOption: ModifierGroup) => {
@@ -551,11 +640,7 @@ export default function MenuSyncPage() {
   };
 
   const getMappedItemRows = () => {
-    return itemMappings.map((mapping) => ({
-      ...mapping,
-      vend88Item: vend88Items.find((item) => item._id === mapping.pos_item_id || item.id === mapping.pos_item_id),
-      uberItem: [...(menuData?.items || []), ...(menuData?.option_items || [])].find((item) => item.id === mapping.uber_item_id),
-    }));
+    return itemMappings;
   };
 
   const mappedItemRows = getMappedItemRows();
@@ -583,14 +668,20 @@ export default function MenuSyncPage() {
           shop_id: businessId,
           pos_item_id: vendItem._id,
           pos_item_name: vendItem.name,
+          pos_item_price: vendItem.price,
+          pos_item_options: vendItem.options,
           uber_item_id: uberItem.id,
           uber_item_name: getText(uberItem.title),
+          uber_item_price: uberItem.price_info?.price,
+          uber_item_options: uberItem.modifier_group_ids?.ids,
         });
 
         mappedPosItemId = String(vendItem._id || "").trim();
       } else {
         const vendItem = itemMapSource.vendItem;
-        const uberItem = getUberBaseItems().find((item) => item.id === targetId);
+        // Get Uber item from the raw candidates that were fetched
+        const uberItem = itemModalUberCandidatesRaw.find((item) => item.id === targetId) ||
+                        [...(menuData?.items || []), ...(menuData?.option_items || [])].find((item) => item.id === targetId);
 
         if (!vendItem || !uberItem) {
           setError("Invalid item mapping selection");
@@ -601,8 +692,12 @@ export default function MenuSyncPage() {
           shop_id: businessId,
           pos_item_id: vendItem._id,
           pos_item_name: vendItem.name,
+          pos_item_price: vendItem.price,
+          pos_item_options: vendItem.options,
           uber_item_id: uberItem.id,
           uber_item_name: getText(uberItem.title),
+          uber_item_price: uberItem.price_info?.price,
+          uber_item_options: uberItem.modifier_group_ids?.ids,
         });
 
         mappedPosItemId = String(vendItem._id || "").trim();
@@ -641,6 +736,56 @@ export default function MenuSyncPage() {
     }
   };
 
+  const handleDeleteItemMapping = async (mappingId: number, posItemId?: string) => {
+    if (!businessId) return;
+
+    try {
+      setError("");
+      await deleteItemMapping(businessId, mappingId);
+
+      if (posItemId) {
+        setLocallyMappedPosItemIds((prev) => {
+          const next = new Set(prev);
+          next.delete(String(posItemId || "").trim());
+          return next;
+        });
+      }
+
+      const [mappingData, uberMenuData] = await Promise.all([
+        getAllMappings(businessId),
+        getLocalUberMenuSnapshot(businessId, uberCurrentPage, uberOptionsCurrentPage, 15, 50),
+      ]);
+
+      setItemMappings(mappingData.items || []);
+      setUberBackendPagedItems(uberMenuData.items || []);
+      if (uberMenuData.pagination) {
+        setUberItemsPagination(uberMenuData.pagination.items);
+      }
+
+      await loadVend88Products(vend88CurrentPage);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || "Failed to delete item mapping");
+    }
+  };
+
+  const handleDeleteOptionMapping = async (mappingId: number) => {
+    if (!businessId) return;
+
+    try {
+      setError("");
+      await deleteOptionMapping(businessId, mappingId);
+
+      const mappingData = await getAllMappings(businessId);
+      setOptionMappings(mappingData.options || []);
+      setOptionItemMappings(mappingData.option_items || []);
+
+      setSuccess("Option mapping deleted (including all option item mappings)");
+      setTimeout(() => setSuccess(""), 2500);
+    } catch (err: any) {
+      setError(err.response?.data?.message || err.message || "Failed to delete option mapping");
+    }
+  };
+
   const getUberOptionItemFromModifierOption = (modifierOptionId: string) => {
     return [...(menuData?.items || []), ...(menuData?.option_items || [])].find((item) => item.id === modifierOptionId);
   };
@@ -665,12 +810,19 @@ export default function MenuSyncPage() {
       return;
     }
 
+    const vend88ItemCount = vendOption.option_items?.length || 0;
+    const uberItemCount = (uberOption.modifier_options || [])
+      .filter((opt) => opt.type === "ITEM")
+      .length;
+
     await saveOptionMapping({
       shop_id: businessId,
       pos_option_id: vendOption._id,
       pos_option_name: vendOption.name,
       uber_option_id: uberOption.id,
       uber_option_name: getText(uberOption.title),
+      vend88_item_count: vend88ItemCount,
+      uber_item_count: uberItemCount,
     });
 
     const defaultSelections: Record<string, string> = {};
@@ -746,46 +898,99 @@ export default function MenuSyncPage() {
     try {
       setAutoMapping(true);
 
+      const posToken = localStorage.getItem("posToken");
+      if (!posToken) {
+        setError("No POS token found. Please login again.");
+        return;
+      }
+
+      const autoMapPageSize = 200;
+
+      // Auto-map should match against the full Vend88 catalog, not just the current page.
+      const firstPage = await getPosProducts(posToken, businessId, autoMapPageSize, 0);
+      const totalPages = Math.max(1, Number(firstPage.max_page || 1));
+      const vend88ItemMap = new Map<string, Vend88Item>();
+
+      (firstPage.products || []).forEach((item) => {
+        const id = String(item?._id || "").trim();
+        if (id) {
+          vend88ItemMap.set(id, item);
+        }
+      });
+
+      for (let page = 1; page < totalPages; page += 1) {
+        const pageData = await getPosProducts(posToken, businessId, autoMapPageSize, page);
+        (pageData.products || []).forEach((item) => {
+          const id = String(item?._id || "").trim();
+          if (id) {
+            vend88ItemMap.set(id, item);
+          }
+        });
+      }
+
+      const allVend88Items = Array.from(vend88ItemMap.values());
+      const allUberRows = await getLocalUberItems(businessId);
+      const uberRowById = new Map(allUberRows.map((row) => [row.item_id, row]));
+
       const usedPosItemIds = new Set(itemMappings.map((m) => m.pos_item_id));
       const usedUberItemIds = new Set(itemMappings.map((m) => m.uber_item_id));
 
       const itemPairs = buildExactNamePairs(
-        vend88Items.map((item) => ({ id: item._id, name: item.name })),
-        getUberBaseItems().map((item) => ({ id: item.id, name: getText(item.title) })),
+        allVend88Items.map((item) => ({ id: item._id, name: item.name })),
+        allUberRows.map((item) => ({ id: item.item_id, name: item.item_name })),
         usedPosItemIds,
         usedUberItemIds
       );
 
       for (const pair of itemPairs) {
+        const vendItem = vend88ItemMap.get(pair.leftId);
+        const uberItem = uberRowById.get(pair.rightId);
+        const uberOptionNames = String(uberItem?.option || "")
+          .split(",")
+          .map((name) => name.trim())
+          .filter((name) => name.length > 0);
+
         await saveItemMapping({
           shop_id: businessId,
           pos_item_id: pair.leftId,
-          pos_item_name: pair.name,
+          pos_item_name: vendItem?.name || pair.name,
+          pos_item_price: vendItem?.price,
+          pos_item_options: vendItem?.options,
           uber_item_id: pair.rightId,
-          uber_item_name: pair.name,
+          uber_item_name: uberItem?.item_name || pair.name,
+          uber_item_price: uberItem?.price_minor,
+          uber_item_options: uberOptionNames,
         });
       }
 
       const usedPosOptionIds = new Set(optionMappings.map((m) => m.pos_option_id));
       const usedUberOptionIds = new Set(optionMappings.map((m) => m.uber_option_id));
-      const optionPairs = buildExactNamePairs(
-        vend88Options.map((option) => ({ id: option._id, name: option.name })),
-        uberOptions.map((option) => ({ id: option.id, name: getText(option.title) })),
+      const optionPairs = buildOptionPairs(
+        vend88Options,
+        uberOptions,
         usedPosOptionIds,
         usedUberOptionIds
       );
 
       for (const pair of optionPairs) {
+        const vendOption = vend88Options.find((opt) => opt._id === pair.leftId);
+        const uberOption = uberOptions.find((opt) => opt.id === pair.rightId);
+
+        const vend88ItemCount = vendOption?.option_items?.length || 0;
+        const uberItemCount = (uberOption?.modifier_options || [])
+          .filter((opt) => opt.type === "ITEM")
+          .length || 0;
+
         await saveOptionMapping({
           shop_id: businessId,
           pos_option_id: pair.leftId,
           pos_option_name: pair.name,
           uber_option_id: pair.rightId,
           uber_option_name: pair.name,
+          vend88_item_count: vend88ItemCount,
+          uber_item_count: uberItemCount,
         });
 
-        const vendOption = vend88Options.find((opt) => opt._id === pair.leftId);
-        const uberOption = uberOptions.find((opt) => opt.id === pair.rightId);
         if (!vendOption || !uberOption) {
           continue;
         }
@@ -823,7 +1028,7 @@ export default function MenuSyncPage() {
       setItemMappings(mappingData.items || []);
       setOptionMappings(mappingData.options || []);
       setOptionItemMappings(mappingData.option_items || []);
-      setSuccess("Auto mapping by exact name completed (current page)");
+      setSuccess("Auto mapping by exact name completed (all Vend88 pages)");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || "Failed to auto map by name");
@@ -927,31 +1132,6 @@ export default function MenuSyncPage() {
   const mappedVendOptionIds = new Set(optionMappings.map((m) => m.pos_option_id));
   const mappedUberOptionIds = new Set(optionMappings.map((m) => m.uber_option_id));
 
-  const filteredUberItemModalCandidates = (() => {
-    if (!itemMapSource || itemMapSource.type !== "vend88") {
-      return [] as Array<{ id: string; name: string; subtitle: string }>;
-    }
-
-    const keyword = normalizeMappingName(itemMapSearch);
-    return getUberBaseItems()
-      .filter((item) => !mappedUberItemIds.has(item.id))
-      .filter((item) => {
-        if (!keyword) return true;
-        return normalizeMappingName(getText(item.title)).includes(keyword);
-      })
-      .map((item) => ({
-        id: item.id,
-        name: getText(item.title),
-        subtitle: item.id,
-      }));
-  })();
-
-  const itemModalUberTotalPages = Math.max(1, Math.ceil(filteredUberItemModalCandidates.length / itemsPerPage));
-  const itemModalUberCandidatesPage = filteredUberItemModalCandidates.slice(
-    (itemModalUberPage - 1) * itemsPerPage,
-    itemModalUberPage * itemsPerPage
-  );
-
   const itemModalCandidates = (() => {
     if (!itemMapSource) {
       return [] as Array<{ id: string; name: string; subtitle: string }>;
@@ -973,7 +1153,7 @@ export default function MenuSyncPage() {
         }));
     }
 
-    return itemModalUberCandidatesPage;
+    return itemModalUberCandidates;
   })();
 
   const filteredUberOptionModalCandidates = (() => {
@@ -1077,7 +1257,7 @@ export default function MenuSyncPage() {
               className="flex items-center gap-2 bg-black text-white px-4 py-2 rounded font-semibold hover:bg-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <RefreshCw className={`w-4 h-4 ${syncingUberCache ? "animate-spin" : ""}`} />
-              {syncingUberCache ? "Syncing..." : "Sync Uber Cache"}
+              {syncingUberCache ? "Syncing..." : "Sync Uber"}
             </button>
             <button
               onClick={handleRefresh}
@@ -1085,7 +1265,7 @@ export default function MenuSyncPage() {
               className="flex items-center gap-2 bg-gray-700 text-white px-4 py-2 rounded font-semibold hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-              {refreshing ? "Reloading..." : "Reload Local"}
+              {refreshing ? "Reloading..." : "Refresh"}
             </button>
             <button
               onClick={() => setShowUploadModeModal(true)}
@@ -1115,20 +1295,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Item Mapped ({getMappedUberItems()})
-              </button>
-              <button
-                onClick={() => {
-                  setItemActiveTab("item-unmapped-uber");
-                  setActiveSection("items");
-                }}
-                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
-                  activeSection === "items" && itemActiveTab === "item-unmapped-uber"
-                    ? "border-black text-black"
-                    : "border-transparent text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                Uber Items ({getUnmappedUberCount()})
+                Mapped Item({getMappedUberItems()})
               </button>
               <button
                 onClick={() => {
@@ -1141,7 +1308,20 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Vend88 Items ({Math.max(0, vend88TotalCount - itemMappings.length)})
+                Unmapped Vend88 Items  ({Math.max(0, vend88TotalCount - itemMappings.length)})
+              </button>
+              <button
+                onClick={() => {
+                  setItemActiveTab("item-unmapped-uber");
+                  setActiveSection("items");
+                }}
+                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  activeSection === "items" && itemActiveTab === "item-unmapped-uber"
+                    ? "border-black text-black"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Unmapped Uber Items ({getUnmappedUberCount()})
               </button>
             </div>
           </div>
@@ -1160,20 +1340,7 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Option Mapped ({optionMappings.length})
-              </button>
-              <button
-                onClick={() => {
-                  setOptionActiveTab("option-unmapped-uber");
-                  setActiveSection("options");
-                }}
-                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
-                  activeSection === "options" && optionActiveTab === "option-unmapped-uber"
-                    ? "border-black text-black"
-                    : "border-transparent text-gray-600 hover:text-gray-900"
-                }`}
-              >
-                Uber Options ({uberOptions.length})
+                Mapped Option({optionMappings.length})
               </button>
               <button
                 onClick={() => {
@@ -1186,7 +1353,20 @@ export default function MenuSyncPage() {
                     : "border-transparent text-gray-600 hover:text-gray-900"
                 }`}
               >
-                Vend88 Options ({optionsTotalCount > 0 ? optionsTotalCount : 0})
+                Unmapped Vend88 Options ({vend88Options.filter((option) => !mappedVendOptionIds.has(option._id)).length})
+              </button>
+              <button
+                onClick={() => {
+                  setOptionActiveTab("option-unmapped-uber");
+                  setActiveSection("options");
+                }}
+                className={`px-6 py-3 text-sm font-semibold border-b-2 transition-colors ${
+                  activeSection === "options" && optionActiveTab === "option-unmapped-uber"
+                    ? "border-black text-black"
+                    : "border-transparent text-gray-600 hover:text-gray-900"
+                }`}
+              >
+                Unmapped Uber Options ({uberOptions.filter((option) => !mappedUberOptionIds.has(option.id)).length})
               </button>
             </div>
           </div>
@@ -1227,49 +1407,90 @@ export default function MenuSyncPage() {
                 <table className="w-full">
                   <thead>
                     <tr className="border-b border-gray-200 bg-gray-50">
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Vend88 Item</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-28">Vend88 ID</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Uber Item</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-28">Uber ID</th>
-                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-24">Actions</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Vend88 Item</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Vend88 ID</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900">Price</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 border-r-2 border-gray-300">Options</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Uber Item</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Uber ID</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900">Price</th>
+                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 border-r-2 border-gray-300">Options</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {mappedItemRows.map((mapping) => (
                       <tr key={mapping.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-6 py-3 flex-1 min-w-48">
-                          <p className="text-sm font-semibold text-gray-900">{mapping.vend88Item?.name || mapping.pos_item_name || "—"}</p>
-                          {mapping.vend88Item?.sku && (
-                            <p className="text-xs text-gray-600">SKU: {mapping.vend88Item.sku}</p>
-                          )}
-                        </td>
-                        <td className="px-6 py-3 w-28">
-                          <span className="text-xs text-gray-900 font-mono whitespace-nowrap">
-                            {(mapping.pos_item_id || "").slice(0, 12)}...
-                          </span>
-                        </td>
-                        <td className="px-6 py-3 flex-1 min-w-48">
+                        <td className="px-6 py-3">
                           <p className="text-sm font-semibold text-gray-900">
-                            {mapping.uberItem ? getText(mapping.uberItem.title) : (mapping.uber_item_name || "—")}
+                            <span className="bg-orange-200 px-2 py-1 rounded">{mapping.pos_item_name || "—"}</span>
                           </p>
-                          {mapping.uberItem?.price_info && (
-                            <p className="text-xs text-gray-600">
-                              ${((mapping.uberItem.price_info.price || 0) / 100).toFixed(2)}
-                            </p>
-                          )}
                         </td>
-                        <td className="px-6 py-3 w-28">
-                          <span className="text-xs text-gray-900 font-mono whitespace-nowrap">
-                            {(mapping.uber_item_id || "").slice(0, 12)}...
-                          </span>
+                        <td className="px-6 py-3 text-xs font-mono text-gray-900">
+                          {mapping.pos_item_id || "—"}
                         </td>
-                        <td className="px-6 py-3 w-24">
+                        <td className="px-6 py-3 text-center">
+                          <p className="text-sm font-semibold text-gray-900">
+                            {formatVend88DisplayPrice(mapping.pos_item_price)}
+                          </p>
+                        </td>
+                        <td className="px-6 py-3 border-r-2 border-gray-300">
+                          {(() => {
+                            const optionNames = getVend88OptionNamesFromStoredOptions(mapping.pos_item_options);
+
+                            if (optionNames.length === 0) {
+                              return <span className="text-gray-500 text-xs">—</span>;
+                            }
+
+                            return (
+                              <div className="flex flex-wrap gap-1">
+                                {optionNames.map((name: string, idx: number) => (
+                                  <span key={idx} className="bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-xs">
+                                    {name}
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-6 py-3">
+                          <p className="text-sm font-semibold text-gray-900">
+                            <span className="bg-green-200 px-2 py-1 rounded">
+                              {mapping.uber_item_name || "—"}
+                            </span>
+                          </p>
+                        </td>
+                        <td className="px-6 py-3 text-xs font-mono text-gray-900">
+                          {mapping.uber_item_id || "—"}
+                        </td>
+                        <td className="px-6 py-3 text-center">
+                          <p className="text-sm font-semibold text-gray-900">
+                            {formatUberDisplayPriceFromMinor(mapping.uber_item_price)}
+                          </p>
+                        </td>
+                        <td className="px-6 py-3 border-r-2 border-gray-300">
+                          {(() => {
+                            const optionNames = getUberOptionGroupNamesFromStoredIds(mapping.uber_item_options);
+
+                            if (optionNames.length === 0) {
+                              return <span className="text-gray-500 text-xs">—</span>;
+                            }
+
+                            return (
+                              <div className="flex flex-wrap gap-1">
+                                {optionNames.map((optionName, idx) => (
+                                  <span key={idx} className="bg-gray-100 text-gray-800 px-2 py-0.5 rounded text-xs">
+                                    {optionName}
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </td>
+                        <td className="px-6 py-3 text-center">
                           <button
-                            onClick={() => {
-                              // TODO: Implement delete mapping
-                              setError("Delete mapping coming soon");
-                            }}
-                            className="flex items-center gap-1 text-red-600 hover:text-red-700 font-semibold text-xs hover:bg-red-50 px-2 py-1 rounded transition-colors"
+                            onClick={() => handleDeleteItemMapping(mapping.id, mapping.pos_item_id)}
+                            className="bg-red-600 hover:bg-red-700 text-white font-semibold text-sm px-4 py-1.5 rounded transition-colors"
                           >
                             Delete
                           </button>
@@ -1355,13 +1576,17 @@ export default function MenuSyncPage() {
                 </div>
                 {getUberTotalPages() > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
-                    <div className="text-sm text-gray-600">
-                      Page {uberCurrentPage} of {getUberTotalPages()} · {getUnmappedUberCount()} items
+                    <div className="text-sm text-gray-600 flex items-center gap-2">
+                      {loadingUberPagination && <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
+                      <span>Page {uberCurrentPage} of {getUberTotalPages()}</span>
                     </div>
                     <div className="flex gap-2">
                       <button
-                        onClick={() => setUberCurrentPage(prev => Math.max(1, prev - 1))}
-                        disabled={uberCurrentPage === 1}
+                        onClick={() => {
+                          setLoadingUberPagination(true);
+                          setUberCurrentPage(prev => Math.max(1, prev - 1));
+                        }}
+                        disabled={uberCurrentPage === 1 || loadingUberPagination}
                         className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Previous
@@ -1369,19 +1594,26 @@ export default function MenuSyncPage() {
                       {Array.from({ length: getUberTotalPages() }, (_, i) => i + 1).map((page) => (
                         <button
                           key={page}
-                          onClick={() => setUberCurrentPage(page)}
+                          onClick={() => {
+                            setLoadingUberPagination(true);
+                            setUberCurrentPage(page);
+                          }}
+                          disabled={loadingUberPagination}
                           className={`px-3 py-1 rounded text-sm font-medium ${
                             uberCurrentPage === page
                               ? 'bg-blue-600 text-white'
                               : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-                          }`}
+                          } ${loadingUberPagination ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                           {page}
                         </button>
                       ))}
                       <button
-                        onClick={() => setUberCurrentPage(prev => Math.min(getUberTotalPages(), prev + 1))}
-                        disabled={uberCurrentPage === getUberTotalPages()}
+                        onClick={() => {
+                          setLoadingUberPagination(true);
+                          setUberCurrentPage(prev => Math.min(getUberTotalPages(), prev + 1));
+                        }}
+                        disabled={uberCurrentPage === getUberTotalPages() || loadingUberPagination}
                         className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Next
@@ -1474,13 +1706,14 @@ export default function MenuSyncPage() {
                 </div>
                 {vend88MaxPage > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
-                    <div className="text-sm text-gray-600">
-                      Page {vend88CurrentPage + 1} of {vend88MaxPage} · Total: {vend88TotalCount > 0 ? vend88TotalCount : 0}
+                    <div className="text-sm text-gray-600 flex items-center gap-2">
+                      {loadingVend88Products && <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
+                      <span>Page {vend88CurrentPage + 1} of {vend88MaxPage}</span>
                     </div>
                     <div className="flex gap-2">
                       <button
                         onClick={() => setVend88CurrentPage(prev => Math.max(0, prev - 1))}
-                        disabled={vend88CurrentPage === 0}
+                        disabled={vend88CurrentPage === 0 || loadingVend88Products}
                         className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Previous
@@ -1489,18 +1722,19 @@ export default function MenuSyncPage() {
                         <button
                           key={page}
                           onClick={() => setVend88CurrentPage(page)}
+                          disabled={loadingVend88Products}
                           className={`px-3 py-1 rounded text-sm font-medium ${
                             vend88CurrentPage === page
                               ? 'bg-blue-600 text-white'
                               : 'border border-gray-300 text-gray-700 hover:bg-gray-100'
-                          }`}
+                          } ${loadingVend88Products ? 'opacity-50 cursor-not-allowed' : ''}`}
                         >
                           {page + 1}
                         </button>
                       ))}
                       <button
                         onClick={() => setVend88CurrentPage(prev => Math.min(vend88MaxPage - 1, prev + 1))}
-                        disabled={vend88CurrentPage === vend88MaxPage - 1}
+                        disabled={vend88CurrentPage === vend88MaxPage - 1 || loadingVend88Products}
                         className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Next
@@ -1528,30 +1762,114 @@ export default function MenuSyncPage() {
                     <tr className="border-b border-gray-200 bg-gray-50">
                       <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Vend88 Option</th>
                       <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Vend88 ID</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 border-r-2 border-gray-300">Items Count</th>
                       <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Uber Option</th>
                       <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Uber ID</th>
-                      <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900">Mapped Option Items</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 border-r-2 border-gray-300">Items Count</th>
+                      <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900">Actions</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {optionMappings.map((mapping) => {
-                      const optionItemCount = optionItemMappings.filter(
-                        (itemMapping) =>
-                          itemMapping.pos_option_id === mapping.pos_option_id &&
-                          itemMapping.uber_option_id === mapping.uber_option_id
-                      ).length;
+                  {optionMappings.map((mapping) => {
+                    const isExpanded = expandedOptionMappingIds.has(mapping.id);
+                    const toggleOptionGroupExpand = () => {
+                      setExpandedOptionMappingIds((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(mapping.id)) {
+                          next.delete(mapping.id);
+                        } else {
+                          next.add(mapping.id);
+                        }
+                        return next;
+                      });
+                    };
 
-                      return (
-                        <tr key={mapping.id} className="hover:bg-gray-50 transition-colors">
-                          <td className="px-6 py-3 text-sm font-semibold text-gray-900">{mapping.pos_option_name || "—"}</td>
+                    // Get Vend88 option items for this option group
+                    const vend88Option = vend88Options.find((opt) => opt._id === mapping.pos_option_id);
+                    const vend88OptionItems = vend88Option?.option_items || [];
+
+                    // Get Uber option items for this option group
+                    const uberOption = uberOptions.find((opt) => opt.id === mapping.uber_option_id);
+                    const uberOptionItems = (uberOption?.modifier_options || []).filter((opt) => opt.type === "ITEM");
+
+                    // Create mapping display rows - align to max count
+                    const maxRows = Math.max(vend88OptionItems.length, uberOptionItems.length);
+
+                    return (
+                      <tbody key={`group-${mapping.id}`} className="group border-b border-gray-200 last:border-b-0">
+                        <tr className={`transition-colors cursor-pointer ${isExpanded ? "bg-blue-50 group-hover:bg-blue-100" : "bg-white group-hover:bg-gray-50"}`} onClick={toggleOptionGroupExpand}>
+                          <td className="px-6 py-3 text-sm font-semibold text-gray-900">
+                            <div className="flex items-center gap-2">
+                              <span className="text-gray-600 font-semibold text-xs">
+                                {isExpanded ? "▼" : "▶"}
+                              </span>
+                              <span className="bg-orange-200 px-2 py-1 rounded">{mapping.pos_option_name || "—"}</span>
+                            </div>
+                          </td>
                           <td className="px-6 py-3 text-xs font-mono text-gray-900">{mapping.pos_option_id}</td>
-                          <td className="px-6 py-3 text-sm font-semibold text-gray-900">{mapping.uber_option_name || "—"}</td>
+                          <td className="px-6 py-3 text-center text-sm text-gray-700 font-semibold border-r-2 border-gray-300">{vend88OptionItems.length}</td>
+                          <td className="px-6 py-3 text-sm font-semibold text-gray-900"><span className="bg-green-200 px-2 py-1 rounded">{mapping.uber_option_name || "—"}</span></td>
                           <td className="px-6 py-3 text-xs font-mono text-gray-900">{mapping.uber_option_id}</td>
-                          <td className="px-6 py-3 text-sm text-gray-700">{optionItemCount}</td>
+                          <td className="px-6 py-3 text-center text-sm text-gray-700 font-semibold border-r-2 border-gray-300">{uberOptionItems.length}</td>
+                          <td className="px-6 py-3 text-center">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteOptionMapping(mapping.id);
+                              }}
+                              className="bg-red-600 hover:bg-red-700 text-white font-semibold text-sm px-4 py-1.5 rounded transition-colors"
+                            >
+                              Delete
+                            </button>
+                          </td>
                         </tr>
-                      );
-                    })}
-                  </tbody>
+                        {isExpanded && maxRows > 0 && (
+                          <>
+                            <tr className="bg-blue-50 group-hover:bg-blue-100 transition-colors cursor-pointer" onClick={toggleOptionGroupExpand}>
+                              <td className="px-6 py-2 text-xs font-semibold text-gray-800 uppercase">Option Item</td>
+                              <td className="px-6 py-2 text-xs font-semibold text-gray-800 uppercase">ID</td>
+                              <td className="px-6 py-2 text-xs font-semibold text-gray-800 uppercase border-r-2 border-gray-300 text-center">Price</td>
+                              <td className="px-6 py-2 text-xs font-semibold text-gray-800 uppercase">Option Item</td>
+                              <td className="px-6 py-2 text-xs font-semibold text-gray-800 uppercase">ID</td>
+                              <td className="px-6 py-2 text-xs font-semibold text-gray-800 uppercase border-r-2 border-gray-300 text-center">Price</td>
+                              <td className="px-6 py-2"></td>
+                            </tr>
+                            {Array.from({ length: maxRows }, (_, idx) => {
+                              const vend88Item = vend88OptionItems[idx];
+                              const uberItem = uberOptionItems[idx];
+
+                              return (
+                                <tr key={`item-${mapping.id}-${idx}`} className="bg-blue-50 group-hover:bg-blue-100 transition-colors cursor-pointer" onClick={toggleOptionGroupExpand}>
+                                  <td className="px-6 py-2 text-xs text-gray-900">
+                                    <span className="bg-orange-200 px-2 py-1 rounded">
+                                      {vend88Item?.name || "—"}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-2 text-xs font-mono text-gray-700">
+                                    {vend88Item?._id || "—"}
+                                  </td>
+                                  <td className="px-6 py-2 text-xs font-semibold text-gray-900 border-r-2 border-gray-300 text-center">
+                                    {vend88Item?.price_adjust !== undefined ? `$${(vend88Item.price_adjust || 0).toFixed(2)}` : "—"}
+                                  </td>
+                                  <td className="px-6 py-2 text-xs text-gray-900">
+                                    <span className="bg-green-200 px-2 py-1 rounded">
+                                      {uberItem ? getUberItemNameById(uberItem.id) : "—"}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-2 text-xs font-mono text-gray-700">
+                                    {uberItem?.id || "—"}
+                                  </td>
+                                  <td className="px-6 py-2 text-xs font-semibold text-gray-900 border-r-2 border-gray-300 text-center">
+                                    {uberItem ? getUberItemPriceById(uberItem.id) : "—"}
+                                  </td>
+                                  <td className="px-6 py-2"></td>
+                                </tr>
+                              );
+                            })}
+                          </>
+                        )}
+                      </tbody>
+                    );
+                  })}
                 </table>
               </div>
             ) : (
@@ -1574,24 +1892,18 @@ export default function MenuSyncPage() {
                       <tr className="border-b border-gray-200 bg-gray-50">
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Option Group Name</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-56">Option ID</th>
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-40">Display Type</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-64">Option Items</th>
                         <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-56">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {getPaginatedUberOptions().map((modifierGroup) => (
+                      {getPaginatedUberOptions().filter((option) => !mappedUberOptionIds.has(option.id)).map((modifierGroup) => (
                         <tr key={modifierGroup.id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-6 py-3 flex-1 min-w-48">
                             <p className="text-sm font-semibold text-gray-900">{getText(modifierGroup.title)}</p>
                           </td>
                           <td className="px-6 py-3 w-56 text-xs text-gray-900 font-mono break-all">
                             {modifierGroup.id}
-                          </td>
-                          <td className="px-6 py-3 w-40 text-sm text-gray-900">
-                            <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-medium">
-                              {modifierGroup.display_type || "expanded"}
-                            </span>
                           </td>
                           <td className="px-6 py-3 flex-1 min-w-64">
                             <div className="space-y-2">
@@ -1633,7 +1945,7 @@ export default function MenuSyncPage() {
                 {getUberOptionsTotalPages() > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
                     <div className="text-sm text-gray-600">
-                      Page {uberOptionsCurrentPage} of {getUberOptionsTotalPages()} · Total: {uberOptions.length}
+                      Page {uberOptionsCurrentPage} of {getUberOptionsTotalPages()}
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -1679,20 +1991,20 @@ export default function MenuSyncPage() {
         {/* Vend88 Options Tab */}
         {activeSection === "options" && optionActiveTab === "option-unmapped-vend88" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            {vend88Options.length > 0 ? (
+            {vend88Options.filter((option) => !mappedVendOptionIds.has(option._id)).length > 0 ? (
               <>
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
                       <tr className="border-b border-gray-200 bg-gray-50">
-                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Option Name</th>
+                        <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-48">Option Group Name</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 w-56">Option ID</th>
                         <th className="px-6 py-3 text-left text-sm font-semibold text-gray-900 flex-1 min-w-64">Option Items</th>
                         <th className="px-6 py-3 text-center text-sm font-semibold text-gray-900 w-30">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {vend88Options.map((option) => (
+                      {vend88Options.filter((option) => !mappedVendOptionIds.has(option._id)).map((option) => (
                         <tr key={option._id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-6 py-3 flex-1 min-w-48">
                             <p className="text-sm font-semibold text-gray-900">{option.name}</p>
@@ -1752,7 +2064,7 @@ export default function MenuSyncPage() {
                 {optionsMaxPage > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
                     <div className="text-sm text-gray-600">
-                      Page {optionsCurrentPage + 1} of {optionsMaxPage} · Total: {optionsTotalCount > 0 ? optionsTotalCount : 0}
+                      Page {optionsCurrentPage + 1} of {optionsMaxPage}
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -1824,7 +2136,10 @@ export default function MenuSyncPage() {
 
               <input
                 value={itemMapSearch}
-                onChange={(e) => setItemMapSearch(e.target.value)}
+                onChange={(e) => {
+                  setItemMapSearch(e.target.value);
+                  setItemModalUberPage(1);
+                }}
                 placeholder={
                   itemMapSource.type === "uber"
                     ? "Search Vend88 item name..."
@@ -1852,19 +2167,22 @@ export default function MenuSyncPage() {
 
               {itemMapSource.type === "uber" && vend88MaxPage > 1 && (
                 <div className="flex items-center justify-between text-sm text-gray-700">
-                  <span>Vend88 page {vend88CurrentPage + 1} / {vend88MaxPage}</span>
+                  <span className="flex items-center gap-2">
+                    {loadingVend88Products && <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
+                    Vend88 page {vend88CurrentPage + 1} / {vend88MaxPage}
+                  </span>
                   <div className="flex gap-2">
                     <button
                       onClick={() => setVend88CurrentPage((prev) => Math.max(0, prev - 1))}
-                      disabled={vend88CurrentPage === 0}
-                      className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                      disabled={vend88CurrentPage === 0 || loadingVend88Products}
+                      className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Previous
                     </button>
                     <button
                       onClick={() => setVend88CurrentPage((prev) => Math.min(vend88MaxPage - 1, prev + 1))}
-                      disabled={vend88CurrentPage >= vend88MaxPage - 1}
-                      className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
+                      disabled={vend88CurrentPage >= vend88MaxPage - 1 || loadingVend88Products}
+                      className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Next
                     </button>

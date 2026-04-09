@@ -29,6 +29,16 @@ function resolvePriceMinor(item) {
   return Number.isFinite(raw) ? raw : 0;
 }
 
+function mergeDefinedFields(base = {}, extra = {}) {
+  const merged = { ...(base || {}) };
+  Object.entries(extra || {}).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      merged[key] = value;
+    }
+  });
+  return merged;
+}
+
 function buildCategoryByItemId(menuConfig = {}) {
   const map = new Map();
   const categories = Array.isArray(menuConfig.categories) ? menuConfig.categories : [];
@@ -97,6 +107,34 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
   const itemToCategories = buildCategoryByItemId(menuConfig);
   const modifierGroupNames = buildModifierGroupNameById(menuConfig);
   const items = Array.isArray(menuConfig.items) ? menuConfig.items : [];
+  const optionItemsById = new Map();
+
+  // Source A: modifier_groups[].modifier_options[] (often contains canonical option-item payload)
+  modifierGroups.forEach((group) => {
+    const options = Array.isArray(group?.modifier_options) ? group.modifier_options : [];
+    options.forEach((option) => {
+      const optionId = normalizeText(option?.id);
+      const type = String(option?.type || "ITEM").toUpperCase();
+      if (!optionId || type !== "ITEM") {
+        return;
+      }
+
+      const existing = optionItemsById.get(optionId) || {};
+      optionItemsById.set(optionId, mergeDefinedFields(existing, { ...option, id: optionId }));
+    });
+  });
+
+  // Source B: items[] entries that are referenced by modifier options
+  items.forEach((item) => {
+    const uberItemId = normalizeText(item?.id);
+    if (!uberItemId || !optionItemIds.has(uberItemId)) {
+      return;
+    }
+
+    const existing = optionItemsById.get(uberItemId) || {};
+    optionItemsById.set(uberItemId, mergeDefinedFields(existing, { ...item, id: uberItemId }));
+  });
+
   let baseItemCount = 0;
   let optionItemCount = 0;
 
@@ -220,24 +258,21 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
       VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW(), NOW())
     `;
 
+    for (const [uberItemId, optionItem] of optionItemsById.entries()) {
+      await client.query(insertOptionItemQuery, [
+        normalizedShopId,
+        uberItemId,
+        extractUberText(optionItem?.title) || "Untitled Item",
+        resolvePriceMinor(optionItem),
+        resolveStatus(optionItem),
+        JSON.stringify(optionItem || {}),
+      ]);
+      optionItemCount += 1;
+    }
+
     for (const item of items) {
       const uberItemId = normalizeText(item?.id);
-      if (!uberItemId) {
-        continue;
-      }
-
-      const isOptionItem = optionItemIds.has(uberItemId);
-
-      if (isOptionItem) {
-        await client.query(insertOptionItemQuery, [
-          normalizedShopId,
-          uberItemId,
-          extractUberText(item?.title) || "Untitled Item",
-          resolvePriceMinor(item),
-          resolveStatus(item),
-          JSON.stringify(item || {}),
-        ]);
-        optionItemCount += 1;
+      if (!uberItemId || optionItemIds.has(uberItemId)) {
         continue;
       }
 
@@ -270,7 +305,7 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
     categoryCount: categories.length,
     itemCount: baseItemCount,
     optionItemCount,
-    totalItemCount: items.length,
+    totalItemCount: baseItemCount + optionItemCount,
     modifierGroupCount: modifierGroups.length,
   };
 }
@@ -298,22 +333,36 @@ export async function listUberItems(shopId) {
   return rows;
 }
 
-export async function getUberMenuSnapshot(shopId, itemPage = 1, optionPage = 1, itemsPerPage = 15, optionItemsPerPage = 50) {
+export async function getUberMenuSnapshot(
+  shopId,
+  itemPage = 1,
+  optionPage = 1,
+  itemsPerPage = 15,
+  optionItemsPerPage = 50,
+  itemSearch = ""
+) {
   const normalizedShopId = normalizeText(shopId);
+  const normalizedItemSearch = normalizeText(itemSearch);
   const itemOffset = Math.max(0, (itemPage - 1) * itemsPerPage);
-  const optionOffset = Math.max(0, (optionPage - 1) * optionItemsPerPage);
 
-  const [menusResult, categoriesResult, itemsCountResult, itemsResult, modifierGroupsResult, optionItemsCountResult, optionItemsResult] = await Promise.all([
-    dbQuery(
-      `SELECT raw_menu FROM uber_menus_local WHERE shop_id = $1 ORDER BY uber_menu_id ASC`,
-      [normalizedShopId]
-    ),
-    dbQuery(
-      `SELECT raw_category FROM uber_categories_local WHERE shop_id = $1 ORDER BY uber_category_id ASC`,
-      [normalizedShopId]
-    ),
-    dbQuery(
-      `
+  const itemsCountPromise = normalizedItemSearch
+    ? dbQuery(
+        `
+      SELECT COUNT(*) as count
+      FROM uber_items_local ui
+      WHERE ui.shop_id = $1
+        AND ui.item_name ILIKE $2
+        AND NOT EXISTS (
+          SELECT 1
+          FROM item_mappings im
+          WHERE im.shop_id = ui.shop_id
+            AND im.uber_item_id = ui.uber_item_id
+        )
+      `,
+        [normalizedShopId, `%${normalizedItemSearch}%`]
+      )
+    : dbQuery(
+        `
       SELECT COUNT(*) as count
       FROM uber_items_local ui
       WHERE ui.shop_id = $1
@@ -324,10 +373,29 @@ export async function getUberMenuSnapshot(shopId, itemPage = 1, optionPage = 1, 
             AND im.uber_item_id = ui.uber_item_id
         )
       `,
-      [normalizedShopId]
-    ),
-    dbQuery(
-      `
+        [normalizedShopId]
+      );
+
+  const itemsResultPromise = normalizedItemSearch
+    ? dbQuery(
+        `
+      SELECT ui.raw_item
+      FROM uber_items_local ui
+      WHERE ui.shop_id = $1
+        AND ui.item_name ILIKE $2
+        AND NOT EXISTS (
+          SELECT 1
+          FROM item_mappings im
+          WHERE im.shop_id = ui.shop_id
+            AND im.uber_item_id = ui.uber_item_id
+        )
+      ORDER BY ui.uber_item_id ASC
+      LIMIT $3 OFFSET $4
+      `,
+        [normalizedShopId, `%${normalizedItemSearch}%`, itemsPerPage, itemOffset]
+      )
+    : dbQuery(
+        `
       SELECT ui.raw_item
       FROM uber_items_local ui
       WHERE ui.shop_id = $1
@@ -340,8 +408,20 @@ export async function getUberMenuSnapshot(shopId, itemPage = 1, optionPage = 1, 
       ORDER BY ui.uber_item_id ASC
       LIMIT $2 OFFSET $3
       `,
-      [normalizedShopId, itemsPerPage, itemOffset]
+        [normalizedShopId, itemsPerPage, itemOffset]
+      );
+
+  const [menusResult, categoriesResult, itemsCountResult, itemsResult, modifierGroupsResult, optionItemsCountResult, optionItemsResult] = await Promise.all([
+    dbQuery(
+      `SELECT raw_menu FROM uber_menus_local WHERE shop_id = $1 ORDER BY uber_menu_id ASC`,
+      [normalizedShopId]
     ),
+    dbQuery(
+      `SELECT raw_category FROM uber_categories_local WHERE shop_id = $1 ORDER BY uber_category_id ASC`,
+      [normalizedShopId]
+    ),
+    itemsCountPromise,
+    itemsResultPromise,
     dbQuery(
       `SELECT raw_modifier_group FROM uber_modifier_groups_local WHERE shop_id = $1 ORDER BY uber_modifier_group_id ASC`,
       [normalizedShopId]
@@ -351,8 +431,8 @@ export async function getUberMenuSnapshot(shopId, itemPage = 1, optionPage = 1, 
       [normalizedShopId]
     ),
     dbQuery(
-      `SELECT raw_item FROM uber_option_items_local WHERE shop_id = $1 ORDER BY uber_item_id ASC LIMIT $2 OFFSET $3`,
-      [normalizedShopId, optionItemsPerPage, optionOffset]
+      `SELECT raw_item FROM uber_option_items_local WHERE shop_id = $1 ORDER BY uber_item_id ASC`,
+      [normalizedShopId]
     ),
   ]);
 
@@ -365,7 +445,6 @@ export async function getUberMenuSnapshot(shopId, itemPage = 1, optionPage = 1, 
   const itemsTotalCount = parseInt(itemsCountResult.rows[0]?.count || 0, 10);
   const optionItemsTotalCount = parseInt(optionItemsCountResult.rows[0]?.count || 0, 10);
   const itemsTotalPages = Math.ceil(itemsTotalCount / itemsPerPage) || 1;
-  const optionItemsTotalPages = Math.ceil(optionItemsTotalCount / optionItemsPerPage) || 1;
 
   return {
     menus,
@@ -381,10 +460,10 @@ export async function getUberMenuSnapshot(shopId, itemPage = 1, optionPage = 1, 
         total_pages: itemsTotalPages,
       },
       option_items: {
-        page: optionPage,
-        per_page: optionItemsPerPage,
+        page: 1,
+        per_page: optionItemsTotalCount,
         total_count: optionItemsTotalCount,
-        total_pages: optionItemsTotalPages,
+        total_pages: 1,
       },
     },
   };
@@ -396,16 +475,24 @@ export async function upsertItemMapping(payload) {
       shop_id,
       pos_item_id,
       pos_item_name,
+      pos_item_price,
+      pos_item_options,
       uber_item_id,
       uber_item_name,
+      uber_item_price,
+      uber_item_options,
       updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
     ON CONFLICT (shop_id, pos_item_id)
     DO UPDATE SET
       pos_item_name = EXCLUDED.pos_item_name,
+      pos_item_price = EXCLUDED.pos_item_price,
+      pos_item_options = EXCLUDED.pos_item_options,
       uber_item_id = EXCLUDED.uber_item_id,
       uber_item_name = EXCLUDED.uber_item_name,
+      uber_item_price = EXCLUDED.uber_item_price,
+      uber_item_options = EXCLUDED.uber_item_options,
       updated_at = NOW()
     RETURNING *
   `;
@@ -414,11 +501,87 @@ export async function upsertItemMapping(payload) {
     normalizeText(payload.shop_id),
     normalizeText(payload.pos_item_id),
     normalizeText(payload.pos_item_name) || null,
+    payload.pos_item_price !== undefined ? payload.pos_item_price : null,
+    payload.pos_item_options ? JSON.stringify(payload.pos_item_options) : null,
     normalizeText(payload.uber_item_id),
     normalizeText(payload.uber_item_name) || null,
+    payload.uber_item_price !== undefined ? payload.uber_item_price : null,
+    payload.uber_item_options ? JSON.stringify(payload.uber_item_options) : null,
   ]);
 
   return rows[0];
+}
+
+export async function deleteItemMapping(shopId, mappingId) {
+  const normalizedShopId = normalizeText(shopId);
+  const normalizedMappingId = Number(mappingId);
+
+  if (!normalizedShopId) {
+    throw new Error("shop_id is required");
+  }
+  if (!Number.isInteger(normalizedMappingId) || normalizedMappingId <= 0) {
+    throw new Error("mapping id must be a positive integer");
+  }
+
+  const { rows } = await dbQuery(
+    `
+      DELETE FROM item_mappings
+      WHERE shop_id = $1 AND id = $2
+      RETURNING *
+    `,
+    [normalizedShopId, normalizedMappingId]
+  );
+
+  return rows[0] || null;
+}
+
+export async function deleteOptionMapping(shopId, mappingId) {
+  const normalizedShopId = normalizeText(shopId);
+  const normalizedMappingId = Number(mappingId);
+
+  if (!normalizedShopId) {
+    throw new Error("shop_id is required");
+  }
+  if (!Number.isInteger(normalizedMappingId) || normalizedMappingId <= 0) {
+    throw new Error("mapping id must be a positive integer");
+  }
+
+  return withDbTransaction(async (client) => {
+    const existingMappingResult = await client.query(
+      `
+        SELECT *
+        FROM option_mappings
+        WHERE shop_id = $1 AND id = $2
+      `,
+      [normalizedShopId, normalizedMappingId]
+    );
+
+    const existingMapping = existingMappingResult.rows[0];
+    if (!existingMapping) {
+      return null;
+    }
+
+    await client.query(
+      `
+        DELETE FROM option_item_mappings
+        WHERE shop_id = $1
+          AND pos_option_id = $2
+          AND uber_option_id = $3
+      `,
+      [normalizedShopId, existingMapping.pos_option_id, existingMapping.uber_option_id]
+    );
+
+    const deletedMappingResult = await client.query(
+      `
+        DELETE FROM option_mappings
+        WHERE shop_id = $1 AND id = $2
+        RETURNING *
+      `,
+      [normalizedShopId, normalizedMappingId]
+    );
+
+    return deletedMappingResult.rows[0] || null;
+  });
 }
 
 export async function upsertOptionMapping(payload) {
@@ -429,17 +592,24 @@ export async function upsertOptionMapping(payload) {
       pos_option_name,
       uber_option_id,
       uber_option_name,
+      vend88_item_count,
+      uber_item_count,
       updated_at
     )
-    VALUES ($1, $2, $3, $4, $5, NOW())
+    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
     ON CONFLICT (shop_id, pos_option_id)
     DO UPDATE SET
       pos_option_name = EXCLUDED.pos_option_name,
       uber_option_id = EXCLUDED.uber_option_id,
       uber_option_name = EXCLUDED.uber_option_name,
+      vend88_item_count = EXCLUDED.vend88_item_count,
+      uber_item_count = EXCLUDED.uber_item_count,
       updated_at = NOW()
     RETURNING *
   `;
+
+  const vend88ItemCount = Number(payload.vend88_item_count || 0);
+  const uberItemCount = Number(payload.uber_item_count || 0);
 
   const { rows } = await dbQuery(query, [
     normalizeText(payload.shop_id),
@@ -447,6 +617,8 @@ export async function upsertOptionMapping(payload) {
     normalizeText(payload.pos_option_name) || null,
     normalizeText(payload.uber_option_id),
     normalizeText(payload.uber_option_name) || null,
+    vend88ItemCount,
+    uberItemCount,
   ]);
 
   return rows[0];

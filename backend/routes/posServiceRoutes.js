@@ -283,20 +283,15 @@ router.get('/options', async (req, res) => {
       }))
     }));
 
-    // Apply pagination on the formatted data
-    const startIdx = pageIdx * pageSize;
-    const endIdx = startIdx + pageSize;
-    const paginatedOptions = allOptions.slice(startIdx, endIdx);
-    const maxPage = Math.ceil(allOptions.length / pageSize) || 1;
-
+    // Return all options without pagination
     res.json({
       status_code: 200,
       success: true,
       data: {
-        options: paginatedOptions,
-        max_page: maxPage,
-        page_idx: pageIdx,
-        page_size: pageSize,
+        options: allOptions,
+        max_page: 1,
+        page_idx: 0,
+        page_size: allOptions.length,
         total: allOptions.length
       }
     });

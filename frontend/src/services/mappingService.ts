@@ -24,8 +24,12 @@ export interface ItemMappingRecord {
   shop_id: string;
   pos_item_id: string;
   pos_item_name: string | null;
+  pos_item_price?: number | string | null;
+  pos_item_options?: unknown;
   uber_item_id: string;
   uber_item_name: string | null;
+  uber_item_price?: number | string | null;
+  uber_item_options?: unknown;
   created_at: string;
   updated_at: string;
 }
@@ -37,6 +41,8 @@ export interface OptionMappingRecord {
   pos_option_name: string | null;
   uber_option_id: string;
   uber_option_name: string | null;
+  vend88_item_count: number;
+  uber_item_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -90,7 +96,8 @@ export async function getLocalUberMenuSnapshot(
   itemPage: number = 1,
   optionPage: number = 1,
   itemsPerPage: number = 15,
-  optionItemsPerPage: number = 50
+  optionItemsPerPage: number = 50,
+  itemSearch: string = ""
 ): Promise<LocalUberMenuSnapshot> {
   const response = await backendApi.get("/mapping/uber-menu/local", {
     params: {
@@ -99,6 +106,7 @@ export async function getLocalUberMenuSnapshot(
       option_page: optionPage,
       items_per_page: itemsPerPage,
       option_items_per_page: optionItemsPerPage,
+      item_search: itemSearch,
     },
   });
 
@@ -143,10 +151,30 @@ export async function saveItemMapping(payload: {
   shop_id: string;
   pos_item_id: string;
   pos_item_name?: string;
+  pos_item_price?: number;
+  pos_item_options?: string | object;
   uber_item_id: string;
   uber_item_name?: string;
+  uber_item_price?: number;
+  uber_item_options?: string | object;
 }) {
   const response = await backendApi.put("/mapping/item", payload);
+  return response.data?.data;
+}
+
+export async function deleteItemMapping(shopId: string, mappingId: number) {
+  const response = await backendApi.delete(`/mapping/item/${mappingId}`, {
+    params: { shop_id: shopId },
+  });
+
+  return response.data?.data;
+}
+
+export async function deleteOptionMapping(shopId: string, mappingId: number) {
+  const response = await backendApi.delete(`/mapping/option/${mappingId}`, {
+    params: { shop_id: shopId },
+  });
+
   return response.data?.data;
 }
 
@@ -156,6 +184,8 @@ export async function saveOptionMapping(payload: {
   pos_option_name?: string;
   uber_option_id: string;
   uber_option_name?: string;
+  vend88_item_count?: number;
+  uber_item_count?: number;
 }) {
   const response = await backendApi.put("/mapping/option", payload);
   return response.data?.data;

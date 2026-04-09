@@ -1,6 +1,8 @@
 import express from "express";
 import { getMenu } from "../services/uberServices/menuService.js";
 import {
+  deleteItemMapping,
+  deleteOptionMapping,
   getMappings,
   getUberMenuSnapshot,
   listUberItems,
@@ -57,8 +59,16 @@ router.get("/uber-menu/local", async (req, res) => {
     const optionPage = Math.max(1, parseInt(req.query.option_page || "1", 10));
     const itemsPerPage = parseInt(req.query.items_per_page || "15", 10);
     const optionItemsPerPage = parseInt(req.query.option_items_per_page || "50", 10);
+    const itemSearch = String(req.query.item_search || "").trim();
 
-    const data = await getUberMenuSnapshot(shopId, itemPage, optionPage, itemsPerPage, optionItemsPerPage);
+    const data = await getUberMenuSnapshot(
+      shopId,
+      itemPage,
+      optionPage,
+      itemsPerPage,
+      optionItemsPerPage,
+      itemSearch
+    );
     res.json({ success: true, data });
   } catch (error) {
     console.error("[mappingRoutes] Failed to get local Uber menu snapshot:", error.message);
@@ -95,6 +105,54 @@ router.put("/item", async (req, res) => {
     res.json({ success: true, data: mapping });
   } catch (error) {
     console.error("[mappingRoutes] Failed to upsert item mapping:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.delete("/item/:id", async (req, res) => {
+  try {
+    const shopId = String(req.query.shop_id || "").trim();
+    if (!shopId) {
+      return res.status(400).json({ success: false, message: "shop_id is required" });
+    }
+
+    const mappingId = Number(req.params.id);
+    if (!Number.isInteger(mappingId) || mappingId <= 0) {
+      return res.status(400).json({ success: false, message: "valid mapping id is required" });
+    }
+
+    const deleted = await deleteItemMapping(shopId, mappingId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: "item mapping not found" });
+    }
+
+    res.json({ success: true, data: deleted });
+  } catch (error) {
+    console.error("[mappingRoutes] Failed to delete item mapping:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.delete("/option/:id", async (req, res) => {
+  try {
+    const shopId = String(req.query.shop_id || "").trim();
+    if (!shopId) {
+      return res.status(400).json({ success: false, message: "shop_id is required" });
+    }
+
+    const mappingId = Number(req.params.id);
+    if (!Number.isInteger(mappingId) || mappingId <= 0) {
+      return res.status(400).json({ success: false, message: "valid mapping id is required" });
+    }
+
+    const deleted = await deleteOptionMapping(shopId, mappingId);
+    if (!deleted) {
+      return res.status(404).json({ success: false, message: "option mapping not found" });
+    }
+
+    res.json({ success: true, data: deleted });
+  } catch (error) {
+    console.error("[mappingRoutes] Failed to delete option mapping:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });
