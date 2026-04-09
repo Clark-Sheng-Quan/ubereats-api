@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/orderdetails.tsx","./src/components/orderlist.tsx","./src/components/posterminal.tsx","./src/context/ordercontext.tsx","./src/services/orderservice.ts"],"version":"5.9.3"}

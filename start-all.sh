@@ -1,13 +1,14 @@
 #!/bin/bash
 
 # Uber Eats API - Development Server Startup Script
-# Starts backend, frontend, and ngrok tunnel simultaneously
+# Starts backend, frontend, POS frontend, and ngrok tunnel simultaneously
 
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$PROJECT_DIR/backend"
 FRONTEND_DIR="$PROJECT_DIR/frontend"
+POS_FRONTEND_DIR="$PROJECT_DIR/pos-frontend"
 
 echo "🚀 Uber Eats API - Development Server Startup"
 echo "=============================================="
@@ -26,6 +27,13 @@ fi
 if [ ! -d "$FRONTEND_DIR/node_modules" ]; then
   echo "⚠️  Frontend dependencies not found. Installing..."
   cd "$FRONTEND_DIR"
+  npm install
+  cd "$PROJECT_DIR"
+fi
+
+if [ ! -d "$POS_FRONTEND_DIR/node_modules" ]; then
+  echo "⚠️  POS Frontend dependencies not found. Installing..."
+  cd "$POS_FRONTEND_DIR"
   npm install
   cd "$PROJECT_DIR"
 fi
@@ -74,6 +82,17 @@ echo "   Process ID: $FRONTEND_PID"
 echo ""
 
 # Wait a bit for frontend to start
+sleep 2
+
+# POS Frontend (port 5175)
+echo "🏪 Starting POS Terminal Frontend on http://localhost:5175"
+cd "$POS_FRONTEND_DIR"
+npm run dev &
+POS_FRONTEND_PID=$!
+echo "   Process ID: $POS_FRONTEND_PID"
+echo ""
+
+# Wait a bit for POS frontend to start
 sleep 2
 
 # ngrok tunnel
