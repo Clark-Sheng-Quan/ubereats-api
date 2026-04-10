@@ -1028,6 +1028,24 @@ export default function MenuSyncPage() {
       setItemMappings(mappingData.items || []);
       setOptionMappings(mappingData.options || []);
       setOptionItemMappings(mappingData.option_items || []);
+
+      // Refresh current page data to reflect mapping status changes
+      await loadVend88Products(vend88CurrentPage);
+      
+      const uberMenuData = await getLocalUberMenuSnapshot(
+        businessId,
+        uberCurrentPage,
+        uberOptionsCurrentPage,
+        15,
+        50
+      );
+      setUberBackendPagedItems(uberMenuData.items || []);
+      setUberBackendPagedOptions(uberMenuData.modifier_groups || []);
+      if (uberMenuData.pagination) {
+        setUberItemsPagination(uberMenuData.pagination.items);
+        setUberOptionsPagination(uberMenuData.pagination.option_items);
+      }
+
       setSuccess("Auto mapping by exact name completed (all Vend88 pages)");
       setTimeout(() => setSuccess(""), 3000);
     } catch (err: any) {
