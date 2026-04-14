@@ -355,8 +355,7 @@ export default function ShopsPage() {
                         {shopBinding ? (
                           <button
                             onClick={() => {
-                              
-                              navigate(`/menu-sync/${shop.business_id}/${shopBinding.uber_store_id}`);
+                              navigate(`/menu-sync/${shop.business_id}/${shop._id}/${shopBinding.uber_store_id}`);
                             }}
                             className="text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
                           >

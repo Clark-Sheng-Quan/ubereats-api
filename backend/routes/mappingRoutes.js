@@ -3,6 +3,8 @@ import { getMenu } from "../services/uberServices/menuService.js";
 import {
   deleteItemMapping,
   deleteOptionMapping,
+  deleteAllItemMappings,
+  deleteAllOptionMappings,
   getMappings,
   getUberMenuSnapshot,
   listUberItems,
@@ -211,6 +213,49 @@ router.get("/all", async (req, res) => {
     res.json({ success: true, data });
   } catch (error) {
     console.error("[mappingRoutes] Failed to get mappings:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.delete("/all-items", async (req, res) => {
+  try {
+    const shopId = String(req.query.shop_id || "").trim();
+    if (!shopId) {
+      return res.status(400).json({ success: false, message: "shop_id is required" });
+    }
+
+    const deletedCount = await deleteAllItemMappings(shopId);
+    res.json({
+      success: true,
+      message: `Deleted ${deletedCount.length} item mappings`,
+      data: { deleted_count: deletedCount.length, deleted_items: deletedCount },
+    });
+  } catch (error) {
+    console.error("[mappingRoutes] Failed to delete all item mappings:", error.message);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+router.delete("/all-options", async (req, res) => {
+  try {
+    const shopId = String(req.query.shop_id || "").trim();
+    if (!shopId) {
+      return res.status(400).json({ success: false, message: "shop_id is required" });
+    }
+
+    const result = await deleteAllOptionMappings(shopId);
+    const totalDeleted = result.option_items.length + result.options.length;
+    res.json({
+      success: true,
+      message: `Deleted ${result.option_items.length} option item mappings and ${result.options.length} option mappings`,
+      data: {
+        option_items_deleted: result.option_items.length,
+        options_deleted: result.options.length,
+        total_deleted: totalDeleted,
+      },
+    });
+  } catch (error) {
+    console.error("[mappingRoutes] Failed to delete all option mappings:", error.message);
     res.status(500).json({ success: false, message: error.message });
   }
 });

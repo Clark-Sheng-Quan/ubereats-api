@@ -2,10 +2,12 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { getPosProducts, getPosProductsCount, getPosOptions } from "../services/posService";
 import { uploadVend88MenuToUber } from "../services/menuUploadService";
-import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X } from "lucide-react";
+import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X, Trash2 } from "lucide-react";
 import {
   deleteItemMapping,
   deleteOptionMapping,
+  deleteAllItemMappings,
+  deleteAllOptionMappings,
   getAllMappings,
   getLocalUberItems,
   getLocalUberMenuSnapshot,
@@ -135,7 +137,7 @@ type ItemTabType = "item-mapped" | "item-unmapped-uber" | "item-unmapped-vend88"
 type OptionTabType = "option-mapped" | "option-unmapped-uber" | "option-unmapped-vend88";
 
 export default function MenuSyncPage() {
-  const { businessId, uberStoreId } = useParams();
+  const { businessId, shopId, uberStoreId } = useParams();
   const navigate = useNavigate();
 
   // Item tab state
@@ -178,7 +180,6 @@ export default function MenuSyncPage() {
   const [vend88Options, setVend88Options] = useState<Vend88Option[]>([]);
   const [optionsCurrentPage, setOptionsCurrentPage] = useState(0);
   const [optionsMaxPage, setOptionsMaxPage] = useState(0);
-  const [optionsTotalCount, setOptionsTotalCount] = useState(0);
   const [uberOptionsCurrentPage, setUberOptionsCurrentPage] = useState(1);
   
   const [loading, setLoading] = useState(true);
@@ -188,6 +189,7 @@ export default function MenuSyncPage() {
   const [loadingVend88Products, setLoadingVend88Products] = useState(false);
   const [loadingUberPagination, setLoadingUberPagination] = useState(false);
   const [showUploadModeModal, setShowUploadModeModal] = useState(false);
+  const [deletingMappings, setDeletingMappings] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [uberCurrentPage, setUberCurrentPage] = useState(1);
@@ -226,17 +228,17 @@ export default function MenuSyncPage() {
     }
 
     loadData();
-  }, [uberStoreId, businessId, navigate]);
+  }, [uberStoreId, businessId, shopId, navigate]);
 
   // Only reload current page items when pagination changes (no need to reload mappings)
   useEffect(() => {
-    if (!businessId || !uberStoreId || !menuData) return;
+    if (!shopId || !uberStoreId || !menuData) return;
 
     // Only load the current page of items, don't reload mappings or Vend88 data
     const loadPagedItems = async () => {
       try {
         const uberMenuData = await getLocalUberMenuSnapshot(
-          businessId,
+          shopId,
           uberCurrentPage,
           uberOptionsCurrentPage,
           15,
@@ -254,7 +256,7 @@ export default function MenuSyncPage() {
     };
 
     loadPagedItems();
-  }, [uberCurrentPage, uberOptionsCurrentPage, businessId, uberStoreId, menuData]);
+  }, [uberCurrentPage, uberOptionsCurrentPage, shopId, uberStoreId, menuData]);
 
   // Load Vend88 products with pagination
   const loadVend88Products = async (pageIdx: number = 0) => {
@@ -287,7 +289,7 @@ export default function MenuSyncPage() {
   };
 
   // Load Vend88 options with pagination
-  const loadVend88Options = async (pageIdx: number = 0) => {
+  const loadVend88Options = async () => {
     try {
       const posToken = localStorage.getItem("posToken");
       if (!posToken) {
@@ -307,7 +309,6 @@ export default function MenuSyncPage() {
       setVend88Options(options);
       setOptionsCurrentPage(0);
       setOptionsMaxPage(1);
-      setOptionsTotalCount(options.length);
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Vend88 options:", err.message);
     }
@@ -322,7 +323,7 @@ export default function MenuSyncPage() {
   // Load Vend88 options when page changes
   useEffect(() => {
     if (!businessId) return;
-    loadVend88Options(optionsCurrentPage);
+    loadVend88Options();
   }, [optionsCurrentPage, businessId]);
 
   // Clear Uber pagination loading state when page changes
@@ -336,14 +337,14 @@ export default function MenuSyncPage() {
   }, [uberCurrentPage, loadingUberPagination]);
 
   useEffect(() => {
-    if (!showItemMapModal || !itemMapSource || itemMapSource.type !== "vend88" || !businessId) {
+    if (!showItemMapModal || !itemMapSource || itemMapSource.type !== "vend88" || !shopId) {
       return;
     }
 
     const timer = setTimeout(async () => {
       try {
         const uberMenuData = await getLocalUberMenuSnapshot(
-          businessId,
+          shopId,
           itemModalUberPage,
           1,
           itemsPerPage,
@@ -369,10 +370,10 @@ export default function MenuSyncPage() {
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [showItemMapModal, itemMapSource, businessId, itemModalUberPage, itemMapSearch, itemsPerPage, optionItemsPerPage]);
+  }, [showItemMapModal, itemMapSource, shopId, itemModalUberPage, itemMapSearch, itemsPerPage, optionItemsPerPage]);
 
   const loadData = async () => {
-    if (!uberStoreId || !businessId) return;
+    if (!uberStoreId || !businessId || !shopId) return;
 
     try {
       setLoading(true);
@@ -380,7 +381,7 @@ export default function MenuSyncPage() {
       setSuccess("");
 
       // Load local cached Uber menu snapshot with pagination
-      const uberMenuData = await getLocalUberMenuSnapshot(businessId, uberCurrentPage, uberOptionsCurrentPage, 15, 50);
+      const uberMenuData = await getLocalUberMenuSnapshot(shopId, uberCurrentPage, uberOptionsCurrentPage, 15, 50);
       setMenuData(uberMenuData);
       
       // Store backend-paged items and options
@@ -397,7 +398,7 @@ export default function MenuSyncPage() {
       const modifierGroups = uberMenuData?.modifier_groups || [];
       setUberOptions(modifierGroups);
 
-      const mappingData = await getAllMappings(businessId);
+      const mappingData = await getAllMappings(shopId);
       setItemMappings(mappingData.items || []);
       setOptionMappings(mappingData.options || []);
       setOptionItemMappings(mappingData.option_items || []);
@@ -411,7 +412,7 @@ export default function MenuSyncPage() {
           setVend88TotalCount(totalCount);
 
           await loadVend88Products(0);
-          await loadVend88Options(0);
+          await loadVend88Options();
         }
       } catch (err: any) {
         console.error("[MenuSync] Failed to load Vend88 data:", err.message);
@@ -425,7 +426,7 @@ export default function MenuSyncPage() {
   };
 
   const handleSyncUberCache = async () => {
-    if (!uberStoreId || !businessId) {
+    if (!uberStoreId || !shopId) {
       setError("Missing store or business information");
       return;
     }
@@ -435,7 +436,7 @@ export default function MenuSyncPage() {
       setError("");
       setSuccess("");
 
-      await syncUberMenuSnapshot(businessId, uberStoreId);
+      await syncUberMenuSnapshot(shopId, uberStoreId);
       await loadData();
       setSuccess("Uber menu synced to local cache");
       setTimeout(() => setSuccess(""), 3000);
@@ -499,6 +500,62 @@ export default function MenuSyncPage() {
       setError(err.response?.data?.error || err.message || "Failed to upload menu");
     } finally {
       setUploadingMenu(false);
+    }
+  };
+
+  const handleDeleteAllItemMappings = async () => {
+    if (!shopId) {
+      setError("Missing shop ID");
+      return;
+    }
+
+    if (!window.confirm("确定要删除所有 item mappings 吗？此操作无法撤销。")) {
+      return;
+    }
+
+    try {
+      setDeletingMappings(true);
+      setError("");
+      setSuccess("");
+
+      await deleteAllItemMappings(shopId);
+      setSuccess("Successfully deleted all item mappings");
+      setTimeout(() => setSuccess(""), 3000);
+
+      // Refresh the data
+      await loadData();
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || "Failed to delete item mappings");
+    } finally {
+      setDeletingMappings(false);
+    }
+  };
+
+  const handleDeleteAllOptionMappings = async () => {
+    if (!shopId) {
+      setError("Missing shop ID");
+      return;
+    }
+
+    if (!window.confirm("确定要删除所有 option 和 option item mappings 吗？此操作无法撤销。")) {
+      return;
+    }
+
+    try {
+      setDeletingMappings(true);
+      setError("");
+      setSuccess("");
+
+      await deleteAllOptionMappings(shopId);
+      setSuccess("Successfully deleted all option mappings");
+      setTimeout(() => setSuccess(""), 3000);
+
+      // Refresh the data
+      await loadData();
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || "Failed to delete option mappings");
+    } finally {
+      setDeletingMappings(false);
     }
   };
 
@@ -646,7 +703,7 @@ export default function MenuSyncPage() {
   const mappedItemRows = getMappedItemRows();
 
   const handleConfirmItemMapping = async (targetId: string) => {
-    if (!businessId) return;
+    if (!businessId || !shopId) return;
 
     try {
       if (!itemMapSource) {
@@ -665,7 +722,7 @@ export default function MenuSyncPage() {
         }
 
         await saveItemMapping({
-          shop_id: businessId,
+          shop_id: shopId,
           pos_item_id: vendItem._id,
           pos_item_name: vendItem.name,
           pos_item_price: vendItem.price,
@@ -689,7 +746,7 @@ export default function MenuSyncPage() {
         }
 
         await saveItemMapping({
-          shop_id: businessId,
+          shop_id: shopId,
           pos_item_id: vendItem._id,
           pos_item_name: vendItem.name,
           pos_item_price: vendItem.price,
@@ -720,8 +777,8 @@ export default function MenuSyncPage() {
       }
 
       const [mappingData, uberMenuData] = await Promise.all([
-        getAllMappings(businessId),
-        getLocalUberMenuSnapshot(businessId, uberCurrentPage, uberOptionsCurrentPage, 15, 50),
+        getAllMappings(shopId),
+        getLocalUberMenuSnapshot(shopId, uberCurrentPage, uberOptionsCurrentPage, 15, 50),
       ]);
       setItemMappings(mappingData.items || []);
       setUberBackendPagedItems(uberMenuData.items || []);
@@ -737,11 +794,11 @@ export default function MenuSyncPage() {
   };
 
   const handleDeleteItemMapping = async (mappingId: number, posItemId?: string) => {
-    if (!businessId) return;
+    if (!shopId) return;
 
     try {
       setError("");
-      await deleteItemMapping(businessId, mappingId);
+      await deleteItemMapping(shopId, mappingId);
 
       if (posItemId) {
         setLocallyMappedPosItemIds((prev) => {
@@ -752,8 +809,8 @@ export default function MenuSyncPage() {
       }
 
       const [mappingData, uberMenuData] = await Promise.all([
-        getAllMappings(businessId),
-        getLocalUberMenuSnapshot(businessId, uberCurrentPage, uberOptionsCurrentPage, 15, 50),
+        getAllMappings(shopId),
+        getLocalUberMenuSnapshot(shopId, uberCurrentPage, uberOptionsCurrentPage, 15, 50),
       ]);
 
       setItemMappings(mappingData.items || []);
@@ -769,13 +826,13 @@ export default function MenuSyncPage() {
   };
 
   const handleDeleteOptionMapping = async (mappingId: number) => {
-    if (!businessId) return;
+    if (!shopId) return;
 
     try {
       setError("");
-      await deleteOptionMapping(businessId, mappingId);
+      await deleteOptionMapping(shopId, mappingId);
 
-      const mappingData = await getAllMappings(businessId);
+      const mappingData = await getAllMappings(shopId);
       setOptionMappings(mappingData.options || []);
       setOptionItemMappings(mappingData.option_items || []);
 
@@ -791,7 +848,7 @@ export default function MenuSyncPage() {
   };
 
   const handleConfirmOptionGroupMapping = async () => {
-    if (!businessId) return;
+    if (!businessId || !shopId) return;
     if (!optionMapSource || !selectedTargetOptionId) {
       setError("Please select a target option group");
       return;
@@ -816,7 +873,7 @@ export default function MenuSyncPage() {
       .length;
 
     await saveOptionMapping({
-      shop_id: businessId,
+      shop_id: shopId,
       pos_option_id: vendOption._id,
       pos_option_name: vendOption.name,
       uber_option_id: uberOption.id,
@@ -847,7 +904,7 @@ export default function MenuSyncPage() {
   };
 
   const handleConfirmOptionItemMappings = async () => {
-    if (!businessId || !optionMapSource) return;
+    if (!businessId || !shopId || !optionMapSource) return;
 
     try {
       const sourceIsUber = optionMapSource.type === "uber";
@@ -871,7 +928,7 @@ export default function MenuSyncPage() {
 
         const uberItem = getUberOptionItemFromModifierOption(selectedUberOptionItemId);
         await saveOptionItemMapping({
-          shop_id: businessId,
+          shop_id: shopId,
           pos_option_id: vendOption._id,
           pos_option_item_id: vendItem._id,
           pos_option_item_name: vendItem.name,
@@ -881,7 +938,7 @@ export default function MenuSyncPage() {
         });
       }
 
-      const mappingData = await getAllMappings(businessId);
+      const mappingData = await getAllMappings(shopId);
       setOptionMappings(mappingData.options || []);
       setOptionItemMappings(mappingData.option_items || []);
       closeOptionMapModal();
@@ -893,7 +950,7 @@ export default function MenuSyncPage() {
   };
 
   const handleAutoMapSameNames = async () => {
-    if (!businessId) return;
+    if (!businessId || !shopId) return;
 
     try {
       setAutoMapping(true);
@@ -929,7 +986,7 @@ export default function MenuSyncPage() {
       }
 
       const allVend88Items = Array.from(vend88ItemMap.values());
-      const allUberRows = await getLocalUberItems(businessId);
+      const allUberRows = await getLocalUberItems(shopId);
       const uberRowById = new Map(allUberRows.map((row) => [row.item_id, row]));
 
       const usedPosItemIds = new Set(itemMappings.map((m) => m.pos_item_id));
@@ -951,7 +1008,7 @@ export default function MenuSyncPage() {
           .filter((name) => name.length > 0);
 
         await saveItemMapping({
-          shop_id: businessId,
+          shop_id: shopId,
           pos_item_id: pair.leftId,
           pos_item_name: vendItem?.name || pair.name,
           pos_item_price: vendItem?.price,
@@ -982,7 +1039,7 @@ export default function MenuSyncPage() {
           .length || 0;
 
         await saveOptionMapping({
-          shop_id: businessId,
+          shop_id: shopId,
           pos_option_id: pair.leftId,
           pos_option_name: pair.name,
           uber_option_id: pair.rightId,
@@ -1013,7 +1070,7 @@ export default function MenuSyncPage() {
 
         for (const optionItemPair of optionItemPairs) {
           await saveOptionItemMapping({
-            shop_id: businessId,
+            shop_id: shopId,
             pos_option_id: vendOption._id,
             pos_option_item_id: optionItemPair.leftId,
             pos_option_item_name: optionItemPair.name,
@@ -1024,7 +1081,7 @@ export default function MenuSyncPage() {
         }
       }
 
-      const mappingData = await getAllMappings(businessId);
+      const mappingData = await getAllMappings(shopId);
       setItemMappings(mappingData.items || []);
       setOptionMappings(mappingData.options || []);
       setOptionItemMappings(mappingData.option_items || []);
@@ -1033,7 +1090,7 @@ export default function MenuSyncPage() {
       await loadVend88Products(vend88CurrentPage);
       
       const uberMenuData = await getLocalUberMenuSnapshot(
-        businessId,
+        shopId,
         uberCurrentPage,
         uberOptionsCurrentPage,
         15,
@@ -1292,6 +1349,26 @@ export default function MenuSyncPage() {
             >
               {uploadingMenu ? "Uploading..." : "Upload Menu"}
             </button>
+            <div className="flex gap-2">
+              <button
+                onClick={handleDeleteAllItemMappings}
+                disabled={deletingMappings || refreshing || uploadingMenu}
+                title="Delete all item mappings"
+                className="flex items-center gap-2 bg-red-600 text-white px-3 py-2 rounded font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Items
+              </button>
+              <button
+                onClick={handleDeleteAllOptionMappings}
+                disabled={deletingMappings || refreshing || uploadingMenu}
+                title="Delete all option & option item mappings"
+                className="flex items-center gap-2 bg-red-600 text-white px-3 py-2 rounded font-semibold hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Options
+              </button>
+            </div>
           </div>
         </div>
       </div>

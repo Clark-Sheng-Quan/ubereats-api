@@ -109,6 +109,7 @@ router.post("/oauth/callback", async (req, res) => {
     await saveUberConnection({
       shop_id,
       uber_store_id: storeId,
+      pos_token,
       access_token: accessToken,
       refresh_token: refreshToken,
       expires_at: new Date(
@@ -465,6 +466,13 @@ router.post("/bind", async (req, res) => {
       pos_shop_name: pos_shop_name || shop_id,
       uber_store_id: uber_store_id,
       uber_store_name: uber_store_name || "Unknown Store",
+    });
+
+    // Keep POS token persisted for webhook-triggered POS order creation.
+    await saveUberConnection({
+      ...connection,
+      shop_id,
+      pos_token,
     });
 
     // Activate integration with Uber

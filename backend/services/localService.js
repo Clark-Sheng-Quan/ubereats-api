@@ -193,17 +193,19 @@ export async function saveUberConnection(connectionData) {
         shop_id,
         uber_store_id,
         uber_store_name,
+        pos_token,
         access_token,
         refresh_token,
         expires_at,
         connected_at,
         updated_at
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
       ON CONFLICT (shop_id)
       DO UPDATE SET
         uber_store_id = EXCLUDED.uber_store_id,
         uber_store_name = EXCLUDED.uber_store_name,
+        pos_token = EXCLUDED.pos_token,
         access_token = EXCLUDED.access_token,
         refresh_token = EXCLUDED.refresh_token,
         expires_at = EXCLUDED.expires_at,
@@ -214,6 +216,7 @@ export async function saveUberConnection(connectionData) {
         connectionData.shop_id,
         connectionData.uber_store_id || null,
         connectionData.uber_store_name || null,
+        connectionData.pos_token || null,
         connectionData.access_token || null,
         connectionData.refresh_token || null,
         connectionData.expires_at || null,
@@ -238,6 +241,7 @@ export async function getUberConnection(shopId) {
         shop_id,
         uber_store_id,
         uber_store_name,
+        pos_token,
         access_token,
         refresh_token,
         expires_at,

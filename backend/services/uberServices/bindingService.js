@@ -28,6 +28,17 @@ export async function getShopBinding(pos_shop_id) {
 }
 
 /**
+ * Get single binding by Uber store ID
+ */
+export async function getShopBindingByUberStoreId(uber_store_id) {
+  const { rows } = await dbQuery(
+    "SELECT pos_shop_id, pos_shop_name, uber_store_id, uber_store_name, bound_at FROM shop_bindings_db WHERE uber_store_id = $1 LIMIT 1",
+    [uber_store_id]
+  );
+  return rows[0] || null;
+}
+
+/**
  * Create or update binding
  */
 export async function saveShopBinding(bindingData) {

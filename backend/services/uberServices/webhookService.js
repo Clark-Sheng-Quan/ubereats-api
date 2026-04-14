@@ -6,9 +6,18 @@ import {
 import { getAccessToken } from "../../utils/tokenManager.js";
 import { 
   saveOrderToStorage, 
+  getOrderById,
   logWebhook, 
   logAction 
 } from "../localService.js";
+import { syncUberOrderToVend88 } from "./posOrderBridgeService.js";
+
+function getOrderNode(orderDetails = {}) {
+  if (orderDetails && typeof orderDetails.order === "object") {
+    return orderDetails.order;
+  }
+  return orderDetails || {};
+}
 
 /**
  * Handle incoming webhook events from Uber Eats
@@ -84,6 +93,43 @@ async function handleNewOrder(resourceHref, meta) {
     const orderDetails = await fetchOrderDetails(orderId, resourceHref);
     console.log(orderDetails);
 
+    const existing = getOrderById(orderId);
+    let vend88Sync = existing?.vend88_sync || null;
+
+    if (vend88Sync?.status !== "success") {
+      try {
+        const syncResult = await syncUberOrderToVend88({
+          orderId,
+          orderDetails,
+          meta,
+        });
+
+        vend88Sync = {
+          status: "success",
+          synced_at: new Date().toISOString(),
+          shop_id: syncResult.shopId,
+          store_id: syncResult.storeId,
+          request: syncResult.requestPayloadPreview,
+          response: syncResult.vend88Response,
+        };
+
+        logAction(orderId, "vend88_order_created", {
+          shop_id: syncResult.shopId,
+          store_id: syncResult.storeId,
+        });
+      } catch (syncError) {
+        vend88Sync = {
+          status: "failed",
+          synced_at: new Date().toISOString(),
+          error: syncError.message,
+        };
+
+        logAction(orderId, "vend88_order_create_failed", {
+          error: syncError.message,
+        });
+      }
+    }
+
     // Save order to storage
     saveOrderToStorage({
       order_id: orderId,
@@ -92,12 +138,28 @@ async function handleNewOrder(resourceHref, meta) {
       order_details: orderDetails,
       received_at: new Date().toISOString(),
       status: "pending",
+      vend88_sync: vend88Sync,
     });
 
     // Log action
+    const orderNode = getOrderNode(orderDetails);
+    const cartItemsCount = Array.isArray(orderNode?.carts)
+      ? orderNode.carts.reduce((sum, cart) => {
+          const count = Array.isArray(cart?.items) ? cart.items.length : 0;
+          return sum + count;
+        }, 0)
+      : 0;
+
     logAction(orderId, "order_received", {
-      items_count: orderDetails?.cart?.items?.length,
-      customer_name: orderDetails?.customer?.name,
+      items_count:
+        orderNode?.cart?.items?.length ||
+        orderNode?.items?.length ||
+        cartItemsCount ||
+        0,
+      customer_name:
+        orderNode?.customer?.name ||
+        orderNode?.customers?.[0]?.name?.display_name ||
+        null,
     });
   } catch (error) {
     console.error(`   ❌ Error processing new order:`, error.message);
@@ -118,6 +180,43 @@ async function handleScheduledOrder(resourceHref, meta) {
     console.log(`[webhookService]   Order ID: ${orderId}`);
     console.log(`[webhookService]   Scheduled time: ${orderDetails?.scheduled_delivery_time}`);
 
+    const existing = getOrderById(orderId);
+    let vend88Sync = existing?.vend88_sync || null;
+
+    if (vend88Sync?.status !== "success") {
+      try {
+        const syncResult = await syncUberOrderToVend88({
+          orderId,
+          orderDetails,
+          meta,
+        });
+
+        vend88Sync = {
+          status: "success",
+          synced_at: new Date().toISOString(),
+          shop_id: syncResult.shopId,
+          store_id: syncResult.storeId,
+          request: syncResult.requestPayloadPreview,
+          response: syncResult.vend88Response,
+        };
+
+        logAction(orderId, "vend88_scheduled_order_created", {
+          shop_id: syncResult.shopId,
+          store_id: syncResult.storeId,
+        });
+      } catch (syncError) {
+        vend88Sync = {
+          status: "failed",
+          synced_at: new Date().toISOString(),
+          error: syncError.message,
+        };
+
+        logAction(orderId, "vend88_scheduled_order_create_failed", {
+          error: syncError.message,
+        });
+      }
+    }
+
     saveOrderToStorage({
       order_id: orderId,
       event_type: "orders.scheduled.notification",
@@ -125,6 +224,7 @@ async function handleScheduledOrder(resourceHref, meta) {
       order_details: orderDetails,
       received_at: new Date().toISOString(),
       status: "scheduled",
+      vend88_sync: vend88Sync,
     });
 
     logAction(orderId, "scheduled_order_received", {
@@ -280,10 +380,18 @@ export async function fetchOrderDetails(orderId, resourceHref = null) {
         "https://api.uber.com",
         "https://test-api.uber.com"
       );
+
+      // For order sync we need expanded payload to include line items.
+      const hasExpand = url.includes("expand=");
+      if (!hasExpand && url.includes("/delivery/order/")) {
+        const separator = url.includes("?") ? "&" : "?";
+        url = `${url}${separator}expand=carts,deliveries,payment`;
+      }
+
       console.log(`[webhookService]   📍 Using webhook resource_href: ${url}`);
     } else {
       // Fallback to constructing the URL
-      url = `${UBER_API_BASE_URL}/v2/eats/orders/${orderId}`;
+      url = `${UBER_API_BASE_URL}/v2/eats/orders/${orderId}?expand=carts,deliveries,payment`;
     }
 
     const response = await fetch(url, {

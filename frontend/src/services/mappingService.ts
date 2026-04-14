@@ -203,3 +203,17 @@ export async function saveOptionItemMapping(payload: {
   const response = await backendApi.put("/mapping/option-item", payload);
   return response.data?.data;
 }
+
+export async function deleteAllItemMappings(shopId: string) {
+  const response = await backendApi.delete("/mapping/all-items", {
+    params: { shop_id: shopId },
+  });
+  return response.data?.data;
+}
+
+export async function deleteAllOptionMappings(shopId: string) {
+  const response = await backendApi.delete("/mapping/all-options", {
+    params: { shop_id: shopId },
+  });
+  return response.data?.data;
+}

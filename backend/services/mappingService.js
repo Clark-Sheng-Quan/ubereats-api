@@ -676,3 +676,45 @@ export async function getMappings(shopId) {
     option_items: optionItemMappings.rows,
   };
 }
+
+export async function deleteAllItemMappings(shopId) {
+  const normalizedShopId = normalizeText(shopId);
+
+  if (!normalizedShopId) {
+    throw new Error("shop_id is required");
+  }
+
+  const { rows } = await dbQuery(
+    `DELETE FROM item_mappings WHERE shop_id = $1 RETURNING *`,
+    [normalizedShopId]
+  );
+
+  return rows;
+}
+
+export async function deleteAllOptionMappings(shopId) {
+  const normalizedShopId = normalizeText(shopId);
+
+  if (!normalizedShopId) {
+    throw new Error("shop_id is required");
+  }
+
+  return withDbTransaction(async (client) => {
+    // Delete all option_item_mappings first
+    const optionItemResults = await client.query(
+      `DELETE FROM option_item_mappings WHERE shop_id = $1 RETURNING *`,
+      [normalizedShopId]
+    );
+
+    // Then delete all option_mappings
+    const optionResults = await client.query(
+      `DELETE FROM option_mappings WHERE shop_id = $1 RETURNING *`,
+      [normalizedShopId]
+    );
+
+    return {
+      option_items: optionItemResults.rows,
+      options: optionResults.rows,
+    };
+  });
+}
