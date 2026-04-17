@@ -26,7 +26,6 @@ function getOrderNode(orderDetails = {}) {
 export async function handleWebhookEvent(webhookData) {
   const { event_type, event_id, resource_href, meta, event_time } = webhookData;
 
-  // Log the webhook for debugging
   logWebhook(webhookData);
 
   try {
@@ -85,7 +84,7 @@ export async function handleWebhookEvent(webhookData) {
  * Fetch complete order details and prepare for POS
  */
 async function handleNewOrder(resourceHref, meta) {
-  console.log(`\n🆕 NEW ORDER RECEIVED`);
+  console.log(`\nNEW ORDER RECEIVED`);
   const orderId = meta?.resource_id;
 
   try {
@@ -141,7 +140,6 @@ async function handleNewOrder(resourceHref, meta) {
       vend88_sync: vend88Sync,
     });
 
-    // Log action
     const orderNode = getOrderNode(orderDetails);
     const cartItemsCount = Array.isArray(orderNode?.carts)
       ? orderNode.carts.reduce((sum, cart) => {
@@ -172,12 +170,11 @@ async function handleNewOrder(resourceHref, meta) {
  * Order scheduled for a future time
  */
 async function handleScheduledOrder(resourceHref, meta) {
-  console.log(`\n📅 SCHEDULED ORDER RECEIVED`);
   const orderId = meta?.resource_id;
 
   try {
     const orderDetails = await fetchOrderDetails(orderId, resourceHref);
-    console.log(`[webhookService]   Order ID: ${orderId}`);
+    console.log(`[webhookService]   Scheduled  Order ID: ${orderId}`);
     console.log(`[webhookService]   Scheduled time: ${orderDetails?.scheduled_delivery_time}`);
 
     const existing = getOrderById(orderId);
@@ -240,7 +237,6 @@ async function handleScheduledOrder(resourceHref, meta) {
  * Courier has reached geo-fence, ready to deliver
  */
 async function handleOrderRelease(resourceHref, meta) {
-  console.log(`[webhookService]\n🚚 COURIER REACHED GEO-FENCE`);
   const orderId = meta?.resource_id;
 
   try {
@@ -256,7 +252,7 @@ async function handleOrderRelease(resourceHref, meta) {
       timestamp: new Date().toISOString(),
     });
 
-    console.log(`[webhookService]   Order ID: ${orderId}`);
+    console.log(`[webhookService]   COURIER REACHED GEO-FENCE - Order ID: ${orderId}`);
     console.log(`[webhookService]   ✅ Courier approaching - prepare order for handoff`);
   } catch (error) {
     console.error(`[webhookService]   ❌ Error handling order release:`, error.message);
@@ -313,7 +309,6 @@ async function handleOrderCancel(resourceHref, meta) {
  * Handle store provisioning (store.provisioned)
  */
 async function handleStoreProvisioned(meta) {
-  console.log(`[webhookService]\n🏪 STORE PROVISIONED`);
   console.log(`[webhookService]   Store has been granted access`);
   logAction("system", "store_provisioned", meta);
 }
@@ -322,7 +317,6 @@ async function handleStoreProvisioned(meta) {
  * Handle store deprovisioning (store.deprovisioned)
  */
 async function handleStoreDeprovisioned(meta) {
-  console.log(`[webhookService]\n🏪 STORE DEPROVISIONED`);
   console.log(`[webhookService]   Store access has been removed`);
   logAction("system", "store_deprovisioned", meta);
 }
@@ -331,7 +325,6 @@ async function handleStoreDeprovisioned(meta) {
  * Handle fulfillment issue resolved
  */
 async function handleFulfillmentResolved(resourceHref, meta) {
-  console.log(`[webhookService]\n✅ FULFILLMENT ISSUE RESOLVED`);
   const orderId = meta?.resource_id;
 
   try {
@@ -346,7 +339,7 @@ async function handleFulfillmentResolved(resourceHref, meta) {
     });
 
     logAction(orderId, "fulfillment_resolved", {});
-    console.log(`[webhookService]   Order ID: ${orderId}`);
+    console.log(`[webhookService] FULFILLMENT ISSUE RESOLVED - Order ID: ${orderId}`);
   } catch (error) {
     console.error(`[webhookService]   ❌ Error handling fulfillment resolution:`, error.message);
   }
@@ -356,8 +349,7 @@ async function handleFulfillmentResolved(resourceHref, meta) {
  * Handle store status change
  */
 async function handleStoreStatusChanged(meta) {
-  console.log(`[webhookService]\n🏪 STORE STATUS CHANGED`);
-  console.log(`[webhookService]   Status: ${meta?.status}`);
+  console.log(`[webhookService]   STORE STATUS CHANGED: ${meta?.status}`);
   logAction("system", "store_status_changed", meta);
 }
 
@@ -388,7 +380,7 @@ export async function fetchOrderDetails(orderId, resourceHref = null) {
         url = `${url}${separator}expand=carts,deliveries,payment`;
       }
 
-      console.log(`[webhookService]   📍 Using webhook resource_href: ${url}`);
+      // console.log(`[webhookService]   📍 Using webhook resource_href: ${url}`);
     } else {
       // Fallback to constructing the URL
       url = `${UBER_API_BASE_URL}/v2/eats/orders/${orderId}?expand=carts,deliveries,payment`;
@@ -406,7 +398,6 @@ export async function fetchOrderDetails(orderId, resourceHref = null) {
       // If it's a 401, the token might be invalid
       if (response.status === 401) {
         console.error(`[webhookService]   ⚠️ Authentication failed. Token may be invalid or expired.`);
-        console.log(`[webhookService]   Returning partial order data from webhook metadata`);
         return { partial: true, order_id: orderId };
       }
 
@@ -432,16 +423,14 @@ export async function fetchOrderDetails(orderId, resourceHref = null) {
  * @param {Object} webhookData - The webhook payload
  */
 async function handleMenuRefreshRequest(webhookData) {
-  console.log(`[webhookService]\n📋 MENU REFRESH REQUESTED`);
   
   const { store_id, partner_store_id, resource_href } = webhookData;
   
-  console.log(`[webhookService]   Store ID: ${store_id}`);
+  console.log(`[webhookService]  MENU REFRESH REQUESTED - Store ID: ${store_id}`);
   if (partner_store_id) console.log(`[webhookService]   Partner Store ID: ${partner_store_id}`);
-  console.log(`[webhookService]   Resource: ${resource_href}`);
+  // console.log(`[webhookService]   Resource: ${resource_href}`);
   
   try {
-    // Log the menu refresh request for audit trail
     logAction(store_id, "menu_refresh_requested", {
       store_id,
       partner_store_id,
@@ -449,8 +438,6 @@ async function handleMenuRefreshRequest(webhookData) {
     });
     
     console.log(`[webhookService]   ✅ Menu refresh request logged`);
-    console.log(`[webhookService]   ACTION: Re-fetch menu from Uber API using GET /v2/eats/stores/{store_id}/menus`);
-    console.log(`[webhookService]   This is typically handled by the POS system automatically`);
   } catch (error) {
     console.error(`[webhookService]   ❌ Error handling menu refresh request:`, error.message);
   }

@@ -17,7 +17,6 @@ export async function verifyPOSToken(token) {
       return null;
     }
 
-    console.log('[TokenService] Verifying token with POS API');
 
     // Call POS API's /auth/profile endpoint
     const response = await axios.post(
@@ -33,7 +32,6 @@ export async function verifyPOSToken(token) {
     );
 
     if (response.status === 200 && response.data) {
-      console.log('[TokenService] Token verified successfully');
       return response.data;
     }
 

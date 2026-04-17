@@ -4,6 +4,7 @@
  */
 import express from "express";
 import axios from "axios";
+import { extractPosTokenFromLoginResponse, savePosToken } from "../services/posAuthService.js";
 
 const router = express.Router();
 const POS_API_BASE = "https://dev.vend88.com";
@@ -26,6 +27,12 @@ router.post("/login", async (req, res) => {
             email,
             password,
         });
+
+        const posToken = extractPosTokenFromLoginResponse(response.data);
+        if (posToken) {
+          savePosToken(posToken, "/api/service/pos/login");
+        }
+
         res.json(response.data);
     }
     catch (error) {

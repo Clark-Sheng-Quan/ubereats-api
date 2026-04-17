@@ -15,6 +15,12 @@ import posServiceRoutes from "./routes/posServiceRoutes.js";
 import uberRoutes from "./routes/uberRoutes/uberRoutes.js";
 import mappingRoutes from "./routes/mappingRoutes.js";
 import { initDatabase } from "./db/client.js";
+import { verifyPOSToken } from "./services/tokenService.js";
+import {
+  clearStoredPosToken,
+  getStoredPosToken,
+  getValidPosToken,
+} from "./services/posAuthService.js";
 
 const app = express();
 app.use(bodyParser.json({ limit: "50mb" }));
@@ -48,7 +54,36 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+async function ensurePosTokenOnStartup() {
+  console.log("[startup] Checking POS token for backend workflow...");
+
+  const stored = getStoredPosToken();
+  if (!stored?.pos_token) {
+    console.warn("[startup] POS token not found, attempting backend auto-login...");
+    await getValidPosToken({ forceRefresh: true });
+    console.log("[startup] POS token obtained via backend auto-login");
+    return;
+  }
+
+  const verified = await verifyPOSToken(stored.pos_token);
+  if (verified) {
+    console.log("[startup] Existing POS token verified");
+    return;
+  }
+
+  console.warn("[startup] Stored POS token is invalid, refreshing via backend auto-login...");
+  clearStoredPosToken("startup-token-invalid");
+  await getValidPosToken({ forceRefresh: true });
+  console.log("[startup] POS token refreshed at startup");
+}
+
 await initDatabase();
+
+try {
+  await ensurePosTokenOnStartup();
+} catch (error) {
+  console.error("[startup] POS token bootstrap failed:", error.message);
+}
 
 app.listen(3000, () => {
   console.log("Listening for webhooks at: http://localhost:3000/ubereats/webhook");

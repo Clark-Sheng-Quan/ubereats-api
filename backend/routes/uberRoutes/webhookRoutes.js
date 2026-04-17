@@ -56,7 +56,7 @@ router.post("/webhook", (req, res) => {
   (async () => {
     try {
       const webhookData = req.body;
-      console.log("[webhookRoutes]✅ Valid webhook received:", webhookData.event_type);
+      console.log("[webhookRoutes]Valid webhook received:", webhookData.event_type);
 
       // Handle the webhook event asynchronously
       await handleWebhookEvent(webhookData);
@@ -65,7 +65,6 @@ router.post("/webhook", (req, res) => {
       res.sendStatus(200);
     } catch (error) {
       console.error("[webhookRoutes]❌ Error processing webhook:", error);
-      // Still return 200 to acknowledge receipt, but log the error
       res.sendStatus(200);
     }
   })();

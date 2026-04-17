@@ -39,7 +39,7 @@ async function loadTokenFromDb() {
         accessToken: token.access_token,
         expiresAt,
       };
-      console.log(`✅ Loaded valid token from database cache, expires: ${new Date(cachedToken.expiresAt).toISOString()}`);
+      console.log(`✅ Loaded valid Uber OAuth token from DB cache, expires: ${new Date(cachedToken.expiresAt).toISOString()}`);
       return true;
     }
 
@@ -151,7 +151,6 @@ export function invalidateToken() {
   dbQuery("DELETE FROM uber_oauth_tokens WHERE id = 1").catch((error) => {
     console.error("Error deleting token from database:", error.message);
   });
-  console.log("🗑️ Cached token invalidated");
 }
 
 /**

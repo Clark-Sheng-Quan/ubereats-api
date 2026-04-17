@@ -29,14 +29,12 @@ const schemaQueries = [
     shop_id TEXT NOT NULL UNIQUE,
     uber_store_id TEXT,
     uber_store_name TEXT,
-    pos_token TEXT,
     access_token TEXT,
     refresh_token TEXT,
     expires_at TEXT,
     connected_at TEXT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`,
-  `ALTER TABLE IF EXISTS uber_connections_db ADD COLUMN IF NOT EXISTS pos_token TEXT`,
   `CREATE TABLE IF NOT EXISTS shop_bindings_db (
     id BIGSERIAL PRIMARY KEY,
     pos_shop_id TEXT NOT NULL UNIQUE,

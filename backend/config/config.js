@@ -64,5 +64,6 @@ export const STORAGE_CONFIG = {
   logsFile: "webhook_logs.json",
   actionsFile: "actions.json",
   connectionsFile: "uber_connections.json",
+  posAuthFile: "pos_auth.json",
   syncFile: "sync_history.json",
 };

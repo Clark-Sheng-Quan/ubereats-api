@@ -13,6 +13,7 @@ import {
   saveSyncHistory, 
   getSyncHistory 
 } from "../../services/localService.js";
+import { savePosToken } from "../../services/posAuthService.js";
 import {
   saveShopBinding,
   getShopBinding,
@@ -56,6 +57,9 @@ router.post("/oauth/callback", async (req, res) => {
         .status(400)
         .json({ success: false, message: "Missing required parameters" });
     }
+
+    // Keep a global POS token for backend-only workflows (webhook/order bridge)
+    savePosToken(pos_token, "/api/uber/oauth/callback");
 
     // Exchange authorization code for token
     // Uber requires form-urlencoded format, not JSON
@@ -109,7 +113,6 @@ router.post("/oauth/callback", async (req, res) => {
     await saveUberConnection({
       shop_id,
       uber_store_id: storeId,
-      pos_token,
       access_token: accessToken,
       refresh_token: refreshToken,
       expires_at: new Date(
@@ -449,6 +452,9 @@ router.post("/bind", async (req, res) => {
         .json({ success: false, message: "Missing required parameters" });
     }
 
+    // Keep a global POS token for backend-only workflows (webhook/order bridge)
+    savePosToken(pos_token, "/api/uber/bind");
+
 
     // Get Uber connection for this shop to get access token
     const connection = await getUberConnection(shop_id);
@@ -472,7 +478,6 @@ router.post("/bind", async (req, res) => {
     await saveUberConnection({
       ...connection,
       shop_id,
-      pos_token,
     });
 
     // Activate integration with Uber

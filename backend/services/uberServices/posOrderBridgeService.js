@@ -1,6 +1,6 @@
 import axios from "axios";
 import { dbQuery } from "../../db/client.js";
-import { getUberConnection } from "../localService.js";
+import { getValidPosToken, clearStoredPosToken } from "../posAuthService.js";
 import { getShopBindingByUberStoreId } from "./bindingService.js";
 
 const POS_API_BASE_URL = "https://dev.vend88.com";
@@ -376,6 +376,36 @@ function buildVend88OrderPayload({ orderDetails, shopId, posToken, mappingContex
   };
 }
 
+function isInvalidTokenResponse(vend88Response = {}) {
+  const message = normalizeText(String(vend88Response?.message || "")).toLowerCase();
+  const statusCode = Number(vend88Response?.status_code);
+  return message.includes("invalid token") || statusCode === 401;
+}
+
+function isErrorResponse(vend88Response = {}) {
+  const statusCode = Number(vend88Response?.status_code);
+  return Number.isFinite(statusCode) && statusCode >= 400;
+}
+
+function prettyToken(token) {
+  if (!token || token.length < 10) return token;
+  return `${token.substring(0, 10)}...${token.substring(token.length - 10)}`;
+}
+
+async function submitVend88Order(payload) {
+  const tokenPreview = payload.token ? `${payload.token.substring(0, 20)}...` : "NO_TOKEN";
+  console.log(`[posOrderBridgeService] 📤 Submitting order to POS with token: ${tokenPreview}`);
+  
+  const response = await axios.post(`${POS_API_BASE_URL}/order/add`, payload, {
+    timeout: 15000,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+
+  return response.data;
+}
+
 export async function syncUberOrderToVend88({ orderId, orderDetails = {}, meta = {} }) {
   const storeId = resolveStoreId(orderDetails, meta);
   if (!storeId) {
@@ -388,12 +418,8 @@ export async function syncUberOrderToVend88({ orderId, orderDetails = {}, meta =
   }
 
   const shopId = normalizeText(binding.pos_shop_id);
-  const connection = await getUberConnection(shopId);
-  const posToken = normalizeText(connection?.pos_token || "");
-
-  if (!posToken) {
-    throw new Error(`Missing POS token for shop ${shopId}`);
-  }
+  const posToken = await getValidPosToken();
+  console.log(`[posOrderBridgeService] 🔑 Got initial token for order sync: ${posToken?.substring(0, 20)}...`);
 
   const mappingContext = await getMappingContext(shopId);
   const payload = buildVend88OrderPayload({
@@ -403,12 +429,33 @@ export async function syncUberOrderToVend88({ orderId, orderDetails = {}, meta =
     mappingContext,
   });
 
-  const response = await axios.post(`${POS_API_BASE_URL}/order/add`, payload, {
-    timeout: 15000,
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
+  let vend88Response = await submitVend88Order(payload);
+
+  // If token is invalid, force refresh and retry once.
+  if (isInvalidTokenResponse(vend88Response)) {
+    console.log(`[posOrderBridgeService] 🔄 Invalid token detected in response:`, {
+      status_code: vend88Response?.status_code,
+      message: vend88Response?.message,
+    });
+    clearStoredPosToken("invalid-token-response");
+    console.log(`[posOrderBridgeService] 🔓 Attempting auto-login for fresh token...`);
+    const refreshedToken = await getValidPosToken({ forceRefresh: true });
+    console.log(`[posOrderBridgeService] ✅ Fresh token obtained: ${prettyToken(refreshedToken)}`);
+    payload.token = refreshedToken;
+    console.log(`[posOrderBridgeService] 🔄 Retrying order submission with fresh token...`);
+    vend88Response = await submitVend88Order(payload);
+    console.log(`[posOrderBridgeService] Response on retry:`, {
+      status_code: vend88Response?.status_code,
+      message: vend88Response?.message,
+    });
+  }
+
+  if (isErrorResponse(vend88Response)) {
+    const statusCode = Number(vend88Response?.status_code);
+    throw new Error(
+      vend88Response?.message || `Vend88 API returned error status_code=${statusCode}`
+    );
+  }
 
   return {
     orderId,
@@ -418,7 +465,7 @@ export async function syncUberOrderToVend88({ orderId, orderDetails = {}, meta =
       ...payload,
       token: "***",
     },
-    vend88Response: response.data,
+    vend88Response,
   };
 }
 
