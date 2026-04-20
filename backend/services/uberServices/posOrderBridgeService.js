@@ -1,6 +1,5 @@
 import axios from "axios";
 import { dbQuery } from "../../db/client.js";
-import { getValidPosToken, clearStoredPosToken } from "../posAuthService.js";
 import { getShopBindingByUberStoreId } from "./bindingService.js";
 
 const POS_API_BASE_URL = "https://dev.vend88.com";
@@ -308,7 +307,55 @@ async function getMappingContext(shopId) {
   };
 }
 
-function buildVend88OrderPayload({ orderDetails, shopId, posToken, mappingContext }) {
+function normalizePhone(phone) {
+  if (!phone || typeof phone !== "string") {
+    return "";
+  }
+  // Remove all non-digit characters, keep only numbers
+  const digits = phone.replace(/\D/g, "");
+  
+  // If starts with 61 (Australia country code), replace with 0
+  if (digits.startsWith("61")) {
+    return "0" + digits.slice(2);
+  }
+  
+  return digits;
+}
+
+function normalizeName(name) {
+  if (!name || typeof name !== "string") {
+    return "";
+  }
+  // Keep only letters (a-z, A-Z) and spaces, remove all other characters including dots, dashes, etc.
+  return name.replace(/[^a-zA-Z\s]/g, "").trim();
+}
+
+function resolveCustomerInfo(orderDetails = {}) {
+  const order = getOrderNode(orderDetails);
+  const customer = order?.customers?.[0] || {};
+  const name = customer?.name || {};
+  const contact = customer?.contact || {};
+  const phone = contact?.phone || {};
+
+  let firstName = normalizeName(String(name?.first_name || ""));
+  let lastName = normalizeName(String(name?.last_name || ""));
+  
+  // Ensure non-empty names
+  if (!firstName) firstName = "Uber";
+  if (!lastName) lastName = "Order";
+
+  const resolved = {
+    email: normalizeText(String(customer?.email || "")),
+    phone: normalizePhone(String(phone?.number || "")),
+    first_name: firstName,
+    last_name: lastName,
+  };
+
+
+  return resolved;
+}
+
+function buildVend88OrderPayload({ orderDetails, shopId, mappingContext }) {
   const orderItems = resolveOrderItems(orderDetails);
 
   if (orderItems.length === 0) {
@@ -351,7 +398,7 @@ function buildVend88OrderPayload({ orderDetails, shopId, posToken, mappingContex
 
     productIds.push(posItemId);
     productQtys.push(resolveOrderItemQty(item));
-    optionItems.push(mappedOptionItemIds);
+    optionItems.push(mappedOptionItemIds.map(id => ({ option_item_id: id, qty: 1 })));
   }
 
   if (unmappedProducts.length > 0) {
@@ -362,13 +409,16 @@ function buildVend88OrderPayload({ orderDetails, shopId, posToken, mappingContex
     throw new Error(`Missing option-item mappings: ${unmappedOptionItems.join(", ")}`);
   }
 
+  const customerInfo = resolveCustomerInfo(orderDetails);
+
   return {
-    token: posToken,
+    email: customerInfo.email,
+    phone: customerInfo.phone,
+    first_name: customerInfo.first_name,
+    last_name: customerInfo.last_name,
     product_ids: productIds,
     product_qtys: productQtys,
     option_items: optionItems,
-    pick_method: resolvePickMethod(orderDetails),
-    pick_time: resolvePickTime(orderDetails),
     shop_id: shopId,
     requirements: resolveRequirements(orderDetails),
     source: "online",
@@ -376,27 +426,16 @@ function buildVend88OrderPayload({ orderDetails, shopId, posToken, mappingContex
   };
 }
 
-function isInvalidTokenResponse(vend88Response = {}) {
-  const message = normalizeText(String(vend88Response?.message || "")).toLowerCase();
-  const statusCode = Number(vend88Response?.status_code);
-  return message.includes("invalid token") || statusCode === 401;
-}
-
 function isErrorResponse(vend88Response = {}) {
   const statusCode = Number(vend88Response?.status_code);
   return Number.isFinite(statusCode) && statusCode >= 400;
 }
 
-function prettyToken(token) {
-  if (!token || token.length < 10) return token;
-  return `${token.substring(0, 10)}...${token.substring(token.length - 10)}`;
-}
-
 async function submitVend88Order(payload) {
-  const tokenPreview = payload.token ? `${payload.token.substring(0, 20)}...` : "NO_TOKEN";
-  console.log(`[posOrderBridgeService] 📤 Submitting order to POS with token: ${tokenPreview}`);
+  console.log(`[posOrderBridgeService] COMPLETE PAYLOAD:`);
+  console.log(JSON.stringify(payload, null, 2));
   
-  const response = await axios.post(`${POS_API_BASE_URL}/order/add`, payload, {
+  const response = await axios.post(`${POS_API_BASE_URL}/order/add_none_user`, payload, {
     timeout: 15000,
     headers: {
       "Content-Type": "application/json",
@@ -418,40 +457,25 @@ export async function syncUberOrderToVend88({ orderId, orderDetails = {}, meta =
   }
 
   const shopId = normalizeText(binding.pos_shop_id);
-  const posToken = await getValidPosToken();
-  console.log(`[posOrderBridgeService] 🔑 Got initial token for order sync: ${posToken?.substring(0, 20)}...`);
 
   const mappingContext = await getMappingContext(shopId);
   const payload = buildVend88OrderPayload({
     orderDetails,
     shopId,
-    posToken,
     mappingContext,
   });
 
-  let vend88Response = await submitVend88Order(payload);
-
-  // If token is invalid, force refresh and retry once.
-  if (isInvalidTokenResponse(vend88Response)) {
-    console.log(`[posOrderBridgeService] 🔄 Invalid token detected in response:`, {
-      status_code: vend88Response?.status_code,
-      message: vend88Response?.message,
-    });
-    clearStoredPosToken("invalid-token-response");
-    console.log(`[posOrderBridgeService] 🔓 Attempting auto-login for fresh token...`);
-    const refreshedToken = await getValidPosToken({ forceRefresh: true });
-    console.log(`[posOrderBridgeService] ✅ Fresh token obtained: ${prettyToken(refreshedToken)}`);
-    payload.token = refreshedToken;
-    console.log(`[posOrderBridgeService] 🔄 Retrying order submission with fresh token...`);
+  let vend88Response;
+  try {
     vend88Response = await submitVend88Order(payload);
-    console.log(`[posOrderBridgeService] Response on retry:`, {
-      status_code: vend88Response?.status_code,
-      message: vend88Response?.message,
-    });
+  } catch (error) {
+    console.error(`[posOrderBridgeService] ❌ API error:`, error.response?.data || error.message);
+    throw error;
   }
 
   if (isErrorResponse(vend88Response)) {
     const statusCode = Number(vend88Response?.status_code);
+    console.error(`[posOrderBridgeService] ❌ POS returned error:`, vend88Response);
     throw new Error(
       vend88Response?.message || `Vend88 API returned error status_code=${statusCode}`
     );
@@ -463,7 +487,7 @@ export async function syncUberOrderToVend88({ orderId, orderDetails = {}, meta =
     shopId,
     requestPayloadPreview: {
       ...payload,
-      token: "***",
+      phone: payload.phone ? `${payload.phone.substring(0, 5)}***` : "",
     },
     vend88Response,
   };
