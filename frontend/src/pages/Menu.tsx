@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { getPosProducts, getPosProductsCount, getPosOptions } from "../services/posService";
+import { getPosProducts, getPosOptions } from "../services/posService";
 import { uploadVend88MenuToUber } from "../services/menuUploadService";
 import { CheckCircle, AlertCircle, RefreshCw, ArrowLeft, X, Trash2 } from "lucide-react";
 import {
@@ -173,13 +173,12 @@ export default function MenuSyncPage() {
   // Vend88 Items state
   const [vend88Items, setVend88Items] = useState<Vend88Item[]>([]);
   const [vend88CurrentPage, setVend88CurrentPage] = useState(0);
-  const [vend88MaxPage, setVend88MaxPage] = useState(0);
   const [vend88TotalCount, setVend88TotalCount] = useState(0);
+  const [vend88Search, setVend88Search] = useState("");
   
   // Vend88 Options state
   const [vend88Options, setVend88Options] = useState<Vend88Option[]>([]);
   const [optionsCurrentPage, setOptionsCurrentPage] = useState(0);
-  const [optionsMaxPage, setOptionsMaxPage] = useState(0);
   const [uberOptionsCurrentPage, setUberOptionsCurrentPage] = useState(1);
   
   const [loading, setLoading] = useState(true);
@@ -187,6 +186,7 @@ export default function MenuSyncPage() {
   const [syncingUberCache, setSyncingUberCache] = useState(false);
   const [uploadingMenu, setUploadingMenu] = useState(false);
   const [loadingVend88Products, setLoadingVend88Products] = useState(false);
+  const [loadingVend88FullSync, setLoadingVend88FullSync] = useState(false);
   const [loadingUberPagination, setLoadingUberPagination] = useState(false);
   const [showUploadModeModal, setShowUploadModeModal] = useState(false);
   const [deletingMappings, setDeletingMappings] = useState(false);
@@ -258,8 +258,8 @@ export default function MenuSyncPage() {
     loadPagedItems();
   }, [uberCurrentPage, uberOptionsCurrentPage, shopId, uberStoreId, menuData]);
 
-  // Load Vend88 products with pagination
-  const loadVend88Products = async (pageIdx: number = 0) => {
+  // Load all Vend88 products once; pagination/search are handled on frontend.
+  const loadVend88Products = async () => {
     try {
       setLoadingVend88Products(true);
       const posToken = localStorage.getItem("posToken");
@@ -273,14 +273,28 @@ export default function MenuSyncPage() {
         return;
       }
 
-      
-      const response = await getPosProducts(posToken, businessId, itemsPerPage, pageIdx);
-      const products = response.products || [];
-      const maxPage = response.max_page || 0;
+      // Step 1: fast preview (first page only) so user can enter immediately.
+      const previewResponse = await getPosProducts(posToken, businessId, 15, 0, { preview: true });
+      const previewProducts = previewResponse.products || [];
 
-      setVend88Items(products);
-      setVend88CurrentPage(pageIdx);
-      setVend88MaxPage(maxPage);
+      setVend88Items(previewProducts);
+      setVend88TotalCount(previewResponse.total || previewProducts.length);
+      setVend88CurrentPage(0);
+
+      // Step 2: full data in background; replace list when ready.
+      setLoadingVend88FullSync(true);
+      getPosProducts(posToken, businessId)
+        .then((fullResponse) => {
+          const fullProducts = fullResponse.products || [];
+          setVend88Items(fullProducts);
+          setVend88TotalCount(fullResponse.total || fullProducts.length);
+        })
+        .catch((error: any) => {
+          console.error("[MenuSync] Background full Vend88 load failed:", error.message || error);
+        })
+        .finally(() => {
+          setLoadingVend88FullSync(false);
+        });
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Vend88 products:", err.message);
     } finally {
@@ -288,7 +302,7 @@ export default function MenuSyncPage() {
     }
   };
 
-  // Load Vend88 options with pagination
+  // Load all Vend88 options once; pagination is handled on frontend.
   const loadVend88Options = async () => {
     try {
       const posToken = localStorage.getItem("posToken");
@@ -308,23 +322,10 @@ export default function MenuSyncPage() {
 
       setVend88Options(options);
       setOptionsCurrentPage(0);
-      setOptionsMaxPage(1);
     } catch (err: any) {
       console.error("[MenuSync] Failed to load Vend88 options:", err.message);
     }
   };
-
-  // Load Vend88 products when page changes
-  useEffect(() => {
-    if (!businessId) return;
-    loadVend88Products(vend88CurrentPage);
-  }, [vend88CurrentPage, businessId]);
-
-  // Load Vend88 options when page changes
-  useEffect(() => {
-    if (!businessId) return;
-    loadVend88Options();
-  }, [optionsCurrentPage, businessId]);
 
   // Clear Uber pagination loading state when page changes
   useEffect(() => {
@@ -408,11 +409,7 @@ export default function MenuSyncPage() {
         if (!posToken) {
           console.warn("[MenuSync] No POS token found");
         } else {
-          const totalCount = await getPosProductsCount(posToken, businessId);
-          setVend88TotalCount(totalCount);
-
-          await loadVend88Products(0);
-          await loadVend88Options();
+          await Promise.all([loadVend88Products(), loadVend88Options()]);
         }
       } catch (err: any) {
         console.error("[MenuSync] Failed to load Vend88 data:", err.message);
@@ -819,7 +816,7 @@ export default function MenuSyncPage() {
         setUberItemsPagination(uberMenuData.pagination.items);
       }
 
-      await loadVend88Products(vend88CurrentPage);
+      await loadVend88Products();
     } catch (err: any) {
       setError(err.response?.data?.message || err.message || "Failed to delete item mapping");
     }
@@ -1087,7 +1084,7 @@ export default function MenuSyncPage() {
       setOptionItemMappings(mappingData.option_items || []);
 
       // Refresh current page data to reflect mapping status changes
-      await loadVend88Products(vend88CurrentPage);
+      await loadVend88Products();
       
       const uberMenuData = await getLocalUberMenuSnapshot(
         shopId,
@@ -1122,6 +1119,9 @@ export default function MenuSyncPage() {
       .map((m) => String(m.uber_item_id || "").trim())
       .filter((id) => id.length > 0)
   );
+  const mappedVendItemIds = mappedPosItemIds;
+  const mappedVendOptionIds = new Set(optionMappings.map((m) => m.pos_option_id));
+  const mappedUberOptionIds = new Set(optionMappings.map((m) => m.uber_option_id));
 
   const effectiveMappedPosItemIds = new Set([
     ...Array.from(mappedPosItemIds),
@@ -1148,7 +1148,23 @@ export default function MenuSyncPage() {
 
   // 获取未映射的 Vend88 商品
   const getUnmappedVend88Items = () => {
-    return vend88Items.filter((item) => !isVendItemMapped(item));
+    const keyword = normalizeMappingName(vend88Search);
+    return vend88Items
+      .filter((item) => !isVendItemMapped(item))
+      .filter((item) => {
+        if (!keyword) {
+          return true;
+        }
+
+        const normalizedName = normalizeMappingName(item.name || "");
+        const normalizedId = normalizeMappingName(String(item._id || ""));
+        const normalizedSku = normalizeMappingName(String(item.sku || ""));
+        return (
+          normalizedName.includes(keyword) ||
+          normalizedId.includes(keyword) ||
+          normalizedSku.includes(keyword)
+        );
+      });
   };
 
   // Pagination helper functions
@@ -1157,8 +1173,9 @@ export default function MenuSyncPage() {
   };
 
   const getPaginatedVend88Items = () => {
-    // vend88Items已经只是一页的数据，直接返回未映射的项
-    return getUnmappedVend88Items();
+    const unmappedItems = getUnmappedVend88Items();
+    const start = vend88CurrentPage * itemsPerPage;
+    return unmappedItems.slice(start, start + itemsPerPage);
   };
 
   const getUberTotalPages = () => uberItemsPagination.total_pages;
@@ -1168,6 +1185,40 @@ export default function MenuSyncPage() {
   };
 
   const getUberOptionsTotalPages = () => uberOptionsPagination.total_pages;
+
+  const getVend88TotalPages = () => {
+    const totalRows = getUnmappedVend88Items().length;
+    return Math.max(1, Math.ceil(totalRows / itemsPerPage));
+  };
+
+  const getUnmappedVend88Options = () => {
+    return vend88Options.filter((option) => !mappedVendOptionIds.has(option._id));
+  };
+
+  const getVend88OptionsTotalPages = () => {
+    const totalRows = getUnmappedVend88Options().length;
+    return Math.max(1, Math.ceil(totalRows / optionItemsPerPage));
+  };
+
+  const getPaginatedVend88Options = () => {
+    const options = getUnmappedVend88Options();
+    const start = optionsCurrentPage * optionItemsPerPage;
+    return options.slice(start, start + optionItemsPerPage);
+  };
+
+  useEffect(() => {
+    const totalPages = getVend88TotalPages();
+    if (vend88CurrentPage > totalPages - 1) {
+      setVend88CurrentPage(Math.max(0, totalPages - 1));
+    }
+  }, [vend88CurrentPage, vend88Items, itemMappings, locallyMappedPosItemIds, vend88Search]);
+
+  useEffect(() => {
+    const totalPages = getVend88OptionsTotalPages();
+    if (optionsCurrentPage > totalPages - 1) {
+      setOptionsCurrentPage(Math.max(0, totalPages - 1));
+    }
+  }, [optionsCurrentPage, vend88Options, optionMappings]);
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -1203,10 +1254,6 @@ export default function MenuSyncPage() {
     return category ? (getText(category.title) || "—") : "—";
   };
 
-  const mappedVendItemIds = mappedPosItemIds;
-  const mappedVendOptionIds = new Set(optionMappings.map((m) => m.pos_option_id));
-  const mappedUberOptionIds = new Set(optionMappings.map((m) => m.uber_option_id));
-
   const itemModalCandidates = (() => {
     if (!itemMapSource) {
       return [] as Array<{ id: string; name: string; subtitle: string }>;
@@ -1215,7 +1262,7 @@ export default function MenuSyncPage() {
     const keyword = normalizeMappingName(itemMapSearch);
 
     if (itemMapSource.type === "uber") {
-      return vend88Items
+      const candidates = vend88Items
         .filter((item) => !mappedVendItemIds.has(item._id))
         .filter((item) => {
           if (!keyword) return true;
@@ -1226,6 +1273,9 @@ export default function MenuSyncPage() {
           name: item.name,
           subtitle: item.sku || item._id,
         }));
+
+      const start = vend88CurrentPage * itemsPerPage;
+      return candidates.slice(start, start + itemsPerPage);
     }
 
     return itemModalUberCandidates;
@@ -1264,7 +1314,7 @@ export default function MenuSyncPage() {
     const keyword = normalizeMappingName(optionMapSearch);
 
     if (optionMapSource.type === "uber") {
-      return vend88Options
+      const candidates = vend88Options
         .filter((option) => !mappedVendOptionIds.has(option._id))
         .filter((option) => {
           if (!keyword) return true;
@@ -1275,6 +1325,9 @@ export default function MenuSyncPage() {
           name: option.name,
           subtitle: option._id,
         }));
+
+      const start = optionsCurrentPage * optionItemsPerPage;
+      return candidates.slice(start, start + optionItemsPerPage);
     }
 
     return optionModalUberCandidatesPage;
@@ -1730,6 +1783,23 @@ export default function MenuSyncPage() {
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
             {getUnmappedVend88Items().length > 0 ? (
               <>
+                <div className="px-6 py-4 border-b border-gray-200 bg-gray-50/60">
+                  {loadingVend88FullSync && (
+                    <p className="mb-2 text-xs text-amber-700 font-medium">
+                      Loading full Vend88 catalog in background...
+                    </p>
+                  )}
+                  <input
+                    type="text"
+                    value={vend88Search}
+                    onChange={(event) => {
+                      setVend88Search(event.target.value);
+                      setVend88CurrentPage(0);
+                    }}
+                    placeholder="Search Vend88 items by name, ID, or SKU"
+                    className="w-full max-w-md px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full">
                     <thead>
@@ -1799,11 +1869,11 @@ export default function MenuSyncPage() {
                     </tbody>
                   </table>
                 </div>
-                {vend88MaxPage > 1 && (
+                {getVend88TotalPages() > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
                     <div className="text-sm text-gray-600 flex items-center gap-2">
                       {loadingVend88Products && <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
-                      <span>Page {vend88CurrentPage + 1} of {vend88MaxPage}</span>
+                      <span>Page {vend88CurrentPage + 1} of {getVend88TotalPages()}</span>
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -1813,7 +1883,7 @@ export default function MenuSyncPage() {
                       >
                         Previous
                       </button>
-                      {Array.from({ length: vend88MaxPage }, (_, i) => i).map((page) => (
+                      {Array.from({ length: getVend88TotalPages() }, (_, i) => i).map((page) => (
                         <button
                           key={page}
                           onClick={() => setVend88CurrentPage(page)}
@@ -1828,8 +1898,8 @@ export default function MenuSyncPage() {
                         </button>
                       ))}
                       <button
-                        onClick={() => setVend88CurrentPage(prev => Math.min(vend88MaxPage - 1, prev + 1))}
-                        disabled={vend88CurrentPage === vend88MaxPage - 1 || loadingVend88Products}
+                        onClick={() => setVend88CurrentPage(prev => Math.min(getVend88TotalPages() - 1, prev + 1))}
+                        disabled={vend88CurrentPage === getVend88TotalPages() - 1 || loadingVend88Products}
                         className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Next
@@ -2086,7 +2156,7 @@ export default function MenuSyncPage() {
         {/* Vend88 Options Tab */}
         {activeSection === "options" && optionActiveTab === "option-unmapped-vend88" && (
           <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            {vend88Options.filter((option) => !mappedVendOptionIds.has(option._id)).length > 0 ? (
+            {getUnmappedVend88Options().length > 0 ? (
               <>
                 <div className="overflow-x-auto">
                   <table className="w-full">
@@ -2099,7 +2169,7 @@ export default function MenuSyncPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {vend88Options.filter((option) => !mappedVendOptionIds.has(option._id)).map((option) => (
+                      {getPaginatedVend88Options().map((option) => (
                         <tr key={option._id} className="hover:bg-gray-50 transition-colors">
                           <td className="px-6 py-3 flex-1 min-w-48">
                             <p className="text-sm font-semibold text-gray-900">{option.name}</p>
@@ -2156,10 +2226,10 @@ export default function MenuSyncPage() {
                     </tbody>
                   </table>
                 </div>
-                {optionsMaxPage > 1 && (
+                {getVend88OptionsTotalPages() > 1 && (
                   <div className="bg-gray-50 border-t border-gray-200 px-6 py-3 flex items-center justify-between">
                     <div className="text-sm text-gray-600">
-                      Page {optionsCurrentPage + 1} of {optionsMaxPage}
+                      Page {optionsCurrentPage + 1} of {getVend88OptionsTotalPages()}
                     </div>
                     <div className="flex gap-2">
                       <button
@@ -2169,7 +2239,7 @@ export default function MenuSyncPage() {
                       >
                         Previous
                       </button>
-                      {Array.from({ length: optionsMaxPage }, (_, i) => i).map((page) => (
+                      {Array.from({ length: getVend88OptionsTotalPages() }, (_, i) => i).map((page) => (
                         <button
                           key={page}
                           onClick={() => setOptionsCurrentPage(page)}
@@ -2183,8 +2253,8 @@ export default function MenuSyncPage() {
                         </button>
                       ))}
                       <button
-                        onClick={() => setOptionsCurrentPage(prev => Math.min(optionsMaxPage - 1, prev + 1))}
-                        disabled={optionsCurrentPage === optionsMaxPage - 1}
+                        onClick={() => setOptionsCurrentPage(prev => Math.min(getVend88OptionsTotalPages() - 1, prev + 1))}
+                        disabled={optionsCurrentPage === getVend88OptionsTotalPages() - 1}
                         className="px-3 py-1 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Next
@@ -2260,11 +2330,11 @@ export default function MenuSyncPage() {
                 )}
               </div>
 
-              {itemMapSource.type === "uber" && vend88MaxPage > 1 && (
+              {itemMapSource.type === "uber" && getVend88TotalPages() > 1 && (
                 <div className="flex items-center justify-between text-sm text-gray-700">
                   <span className="flex items-center gap-2">
                     {loadingVend88Products && <div className="w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />}
-                    Vend88 page {vend88CurrentPage + 1} / {vend88MaxPage}
+                    Vend88 page {vend88CurrentPage + 1} / {getVend88TotalPages()}
                   </span>
                   <div className="flex gap-2">
                     <button
@@ -2275,8 +2345,8 @@ export default function MenuSyncPage() {
                       Previous
                     </button>
                     <button
-                      onClick={() => setVend88CurrentPage((prev) => Math.min(vend88MaxPage - 1, prev + 1))}
-                      disabled={vend88CurrentPage >= vend88MaxPage - 1 || loadingVend88Products}
+                      onClick={() => setVend88CurrentPage((prev) => Math.min(getVend88TotalPages() - 1, prev + 1))}
+                      disabled={vend88CurrentPage >= getVend88TotalPages() - 1 || loadingVend88Products}
                       className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Next
@@ -2365,9 +2435,9 @@ export default function MenuSyncPage() {
                   )}
                 </div>
 
-                {optionMapSource.type === "uber" && optionsMaxPage > 1 && (
+                {optionMapSource.type === "uber" && getVend88OptionsTotalPages() > 1 && (
                   <div className="flex items-center justify-between text-sm text-gray-700">
-                    <span>Vend88 option page {optionsCurrentPage + 1} / {optionsMaxPage}</span>
+                    <span>Vend88 option page {optionsCurrentPage + 1} / {getVend88OptionsTotalPages()}</span>
                     <div className="flex gap-2">
                       <button
                         onClick={() => setOptionsCurrentPage((prev) => Math.max(0, prev - 1))}
@@ -2377,8 +2447,8 @@ export default function MenuSyncPage() {
                         Previous
                       </button>
                       <button
-                        onClick={() => setOptionsCurrentPage((prev) => Math.min(optionsMaxPage - 1, prev + 1))}
-                        disabled={optionsCurrentPage >= optionsMaxPage - 1}
+                        onClick={() => setOptionsCurrentPage((prev) => Math.min(getVend88OptionsTotalPages() - 1, prev + 1))}
+                        disabled={optionsCurrentPage >= getVend88OptionsTotalPages() - 1}
                         className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50"
                       >
                         Next

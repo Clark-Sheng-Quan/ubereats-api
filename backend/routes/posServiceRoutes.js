@@ -8,6 +8,74 @@ import { extractPosTokenFromLoginResponse, savePosToken } from "../services/posA
 
 const router = express.Router();
 const POS_API_BASE = "https://dev.vend88.com";
+const PRODUCTS_CACHE_TTL_MS = Number(process.env.POS_PRODUCTS_CACHE_TTL_MS || 900000);
+const PRODUCTS_FETCH_CONCURRENCY = Number(process.env.POS_PRODUCTS_FETCH_CONCURRENCY || 6);
+const OPTIONS_CACHE_TTL_MS = Number(process.env.POS_OPTIONS_CACHE_TTL_MS || 900000);
+const productsCache = new Map();
+const optionsCache = new Map();
+
+function getProductsCacheKey(businessId) {
+  return String(businessId || "").trim();
+}
+
+function readProductsCache(cacheKey) {
+  const entry = productsCache.get(cacheKey);
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() > entry.expiresAt) {
+    productsCache.delete(cacheKey);
+    return null;
+  }
+
+  return entry.products;
+}
+
+function writeProductsCache(cacheKey, products) {
+  productsCache.set(cacheKey, {
+    products,
+    expiresAt: Date.now() + PRODUCTS_CACHE_TTL_MS,
+  });
+}
+
+function readOptionsCache(cacheKey) {
+  const entry = optionsCache.get(cacheKey);
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() > entry.expiresAt) {
+    optionsCache.delete(cacheKey);
+    return null;
+  }
+
+  return entry.options;
+}
+
+function writeOptionsCache(cacheKey, options) {
+  optionsCache.set(cacheKey, {
+    options,
+    expiresAt: Date.now() + OPTIONS_CACHE_TTL_MS,
+  });
+}
+
+async function mapWithConcurrency(items, concurrency, mapper) {
+  const normalizedConcurrency = Math.max(1, Number(concurrency) || 1);
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  const workers = Array.from({ length: Math.min(normalizedConcurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
 
 /**
  * POST /api/service/pos/login - User login
@@ -152,9 +220,22 @@ router.get('/products', async (req, res) => {
     // Extract token from Authorization header
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : authHeader;
-    const { business_id, page_size = '50', page_idx = '0' } = req.query;
-    const pageSize = parseInt(page_size);
-    const pageIdx = parseInt(page_idx);
+    const { business_id } = req.query;
+    const forceRefresh = String(req.query.force_refresh || "0") === "1";
+    const previewOnly = String(req.query.preview || "0") === "1";
+    const requestedPreviewPageSize = Number(req.query.preview_page_size || req.query.page_size || 15);
+    const previewPageSize = Number.isFinite(requestedPreviewPageSize)
+      ? Math.max(1, Math.min(50, Math.floor(requestedPreviewPageSize)))
+      : 15;
+    const pageSize = previewOnly ? previewPageSize : 100;
+
+    if (!token) {
+      return res.status(401).json({
+        status_code: 401,
+        success: false,
+        message: 'Token is required in Authorization header'
+      });
+    }
 
     if (!business_id) {
       return res.status(400).json({
@@ -164,7 +245,31 @@ router.get('/products', async (req, res) => {
       });
     }
 
-    // console.log('[PosService] Fetching products - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
+    const cacheKey = getProductsCacheKey(business_id);
+    if (!forceRefresh) {
+      const cachedProducts = readProductsCache(cacheKey);
+      if (cachedProducts) {
+        const responseProducts = previewOnly
+          ? cachedProducts.slice(0, previewPageSize)
+          : cachedProducts;
+
+        return res.json({
+          status_code: 200,
+          success: true,
+          data: {
+            products: responseProducts,
+            max_page: previewOnly
+              ? Math.max(1, Math.ceil(cachedProducts.length / previewPageSize))
+              : 1,
+            page_idx: 0,
+            page_size: responseProducts.length,
+            total: cachedProducts.length,
+            cached: true,
+            partial: previewOnly,
+          }
+        });
+      }
+    }
 
     const client = axios.create({
       baseURL: POS_API_BASE,
@@ -172,21 +277,98 @@ router.get('/products', async (req, res) => {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
       },
-      timeout: 10000
+      timeout: 20000
     });
 
-    // Call /search/product_search to get full product list
-    const response = await client.post('/search/product_search', {
-      query: {
-        business_id: business_id
-      },
-      page_size: pageSize,
-      page_idx: pageIdx,
-      detail: true
+    const fetchProductPage = async (pageIdx) => {
+      const response = await client.post('/search/product_search', {
+        query: {
+          business_id: business_id
+        },
+        page_size: pageSize,
+        page_idx: pageIdx,
+        detail: true
+      });
+
+      return {
+        products: Array.isArray(response.data?.products) ? response.data.products : [],
+        rawMaxPage: Number(response.data?.max_page),
+      };
+    };
+
+    const startedAt = Date.now();
+    const firstPage = await fetchProductPage(0);
+    const normalizedRawMaxPage = Number.isFinite(firstPage.rawMaxPage) ? firstPage.rawMaxPage : 0;
+
+    if (previewOnly) {
+      let totalCount = firstPage.products.length;
+      if (normalizedRawMaxPage > 0) {
+        const lastPageData = await fetchProductPage(normalizedRawMaxPage);
+        totalCount = normalizedRawMaxPage * pageSize + lastPageData.products.length;
+      }
+
+      const previewProducts = firstPage.products.map(product => ({
+        _id: product._id || product.product_id,
+        name: product.name,
+        price: product.price,
+        description: product.description,
+        calorie: product.calorie,
+        sku: product.sku,
+        category: Array.isArray(product.category) ? product.category[0] : product.category,
+        active: product.active !== false,
+        image_url: Array.isArray(product.image_urls) ? product.image_urls[0] : product.image_urls,
+        options: product.options || []
+      }));
+
+      return res.json({
+        status_code: 200,
+        success: true,
+        data: {
+          products: previewProducts,
+          max_page: normalizedRawMaxPage + 1,
+          page_idx: 0,
+          page_size: previewProducts.length,
+          total: totalCount,
+          cached: false,
+          partial: true,
+          fetch_ms: Date.now() - startedAt,
+        }
+      });
+    }
+
+    const seenIds = new Set();
+    const rawProducts = [];
+
+    firstPage.products.forEach((product) => {
+      const id = String(product?._id || product?.product_id || '').trim();
+      if (!id || seenIds.has(id)) {
+        return;
+      }
+      seenIds.add(id);
+      rawProducts.push(product);
     });
 
-    // Extract products from response - they are at top level of response.data
-    const rawProducts = response.data?.products || [];
+    const remainingPages = [];
+    for (let pageIdx = 1; pageIdx <= normalizedRawMaxPage; pageIdx += 1) {
+      remainingPages.push(pageIdx);
+    }
+
+    const remainingPageData = await mapWithConcurrency(
+      remainingPages,
+      PRODUCTS_FETCH_CONCURRENCY,
+      async (pageIdx) => fetchProductPage(pageIdx)
+    );
+
+    remainingPageData.forEach((pageData) => {
+      pageData.products.forEach((product) => {
+        const id = String(product?._id || product?.product_id || '').trim();
+        if (!id || seenIds.has(id)) {
+          return;
+        }
+        seenIds.add(id);
+        rawProducts.push(product);
+      });
+    });
 
     // Extract and format product data - map POS fields to our schema
     const products = rawProducts.map(product => ({
@@ -202,19 +384,20 @@ router.get('/products', async (req, res) => {
       options: product.options || []
     }));
 
-    // POS max_page is a 0-based max page index.
-    // Normalize to page count for frontend usage.
-    const rawMaxPage = Number(response.data?.max_page);
-    const maxPage = Number.isFinite(rawMaxPage) ? rawMaxPage + 1 : 0;
+    const totalCount = products.length;
+    writeProductsCache(cacheKey, products);
 
     res.json({
       status_code: 200,
       success: true,
       data: {
         products: products,
-        max_page: maxPage,
-        page_idx: pageIdx,
-        page_size: pageSize
+        max_page: 1,
+        page_idx: 0,
+        page_size: totalCount,
+        total: totalCount,
+        cached: false,
+        fetch_ms: Date.now() - startedAt,
       }
     });
   } catch (error) {
@@ -259,6 +442,23 @@ router.get('/options', async (req, res) => {
       });
     }
 
+    const cacheKey = getProductsCacheKey(business_id);
+    const cachedOptions = readOptionsCache(cacheKey);
+    if (cachedOptions) {
+      return res.json({
+        status_code: 200,
+        success: true,
+        data: {
+          options: cachedOptions,
+          max_page: 1,
+          page_idx: 0,
+          page_size: cachedOptions.length,
+          total: cachedOptions.length,
+          cached: true,
+        }
+      });
+    }
+
     // console.log('[PosService] Fetching options - business:', business_id, 'page_idx:', pageIdx, 'page_size:', pageSize);
 
     const client = axios.create({
@@ -290,6 +490,8 @@ router.get('/options', async (req, res) => {
       }))
     }));
 
+    writeOptionsCache(cacheKey, allOptions);
+
     // Return all options without pagination
     res.json({
       status_code: 200,
@@ -299,7 +501,8 @@ router.get('/options', async (req, res) => {
         max_page: 1,
         page_idx: 0,
         page_size: allOptions.length,
-        total: allOptions.length
+        total: allOptions.length,
+        cached: false,
       }
     });
   } catch (error) {

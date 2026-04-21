@@ -214,14 +214,34 @@ function resolveOrderItemQty(orderItem = {}) {
   return Math.floor(qty);
 }
 
-function resolveSelectedOptionItemIds(orderItem = {}) {
-  const ids = new Set();
+function resolveSelectedOptionSelections(orderItem = {}) {
+  const selections = [];
+  const seen = new Set();
 
-  const addId = (value) => {
-    const id = normalizeText(String(value || ""));
-    if (id) {
-      ids.add(id);
+  const pushSelection = (uberOptionId, uberOptionItemId) => {
+    const normalizedOptionId = normalizeText(String(uberOptionId || ""));
+    const normalizedOptionItemId = normalizeText(String(uberOptionItemId || ""));
+    if (!normalizedOptionItemId) {
+      return;
     }
+
+    const key = `${normalizedOptionId}::${normalizedOptionItemId}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    selections.push({
+      uberOptionId: normalizedOptionId,
+      uberOptionItemId: normalizedOptionItemId,
+    });
+  };
+
+  const resolveOptionItemIdCandidates = (node = {}) => {
+    const candidates = [node?.id, node?.item_id, node?.external_data];
+    return candidates
+      .map((value) => normalizeText(String(value || "")))
+      .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index);
   };
 
   const groups = Array.isArray(orderItem?.selected_modifier_groups)
@@ -229,18 +249,20 @@ function resolveSelectedOptionItemIds(orderItem = {}) {
     : [];
 
   groups.forEach((group) => {
+    const uberOptionId = normalizeText(String(group?.id || group?.modifier_group_id || ""));
+
     const selectedItems = Array.isArray(group?.selected_items) ? group.selected_items : [];
     selectedItems.forEach((selectedItem) => {
-      addId(selectedItem?.id);
-      addId(selectedItem?.item_id);
-      addId(selectedItem?.external_data);
+      resolveOptionItemIdCandidates(selectedItem).forEach((optionItemId) => {
+        pushSelection(uberOptionId, optionItemId);
+      });
     });
 
     const modifierOptions = Array.isArray(group?.modifier_options) ? group.modifier_options : [];
     modifierOptions.forEach((option) => {
-      addId(option?.id);
-      addId(option?.item_id);
-      addId(option?.external_data);
+      resolveOptionItemIdCandidates(option).forEach((optionItemId) => {
+        pushSelection(uberOptionId, optionItemId);
+      });
     });
   });
 
@@ -248,23 +270,23 @@ function resolveSelectedOptionItemIds(orderItem = {}) {
     ? orderItem.selected_modifier_options
     : [];
   selectedOptions.forEach((option) => {
-    addId(option?.id);
-    addId(option?.item_id);
-    addId(option?.external_data);
+    resolveOptionItemIdCandidates(option).forEach((optionItemId) => {
+      pushSelection("", optionItemId);
+    });
   });
 
   const plainOptions = Array.isArray(orderItem?.options) ? orderItem.options : [];
   plainOptions.forEach((option) => {
-    addId(option?.id);
-    addId(option?.item_id);
-    addId(option?.external_data);
+    resolveOptionItemIdCandidates(option).forEach((optionItemId) => {
+      pushSelection("", optionItemId);
+    });
   });
 
-  return Array.from(ids);
+  return selections;
 }
 
 async function getMappingContext(shopId) {
-  const [itemMappingResult, optionItemMappingResult] = await Promise.all([
+  const [itemMappingResult, optionMappingResult, optionItemMappingResult] = await Promise.all([
     dbQuery(
       `
         SELECT uber_item_id, pos_item_id
@@ -275,7 +297,15 @@ async function getMappingContext(shopId) {
     ),
     dbQuery(
       `
-        SELECT uber_option_item_id, pos_option_item_id
+        SELECT uber_option_id, pos_option_id
+        FROM option_mappings
+        WHERE shop_id = $1
+      `,
+      [shopId]
+    ),
+    dbQuery(
+      `
+        SELECT uber_option_id, uber_option_item_id, pos_option_id, pos_option_item_id
         FROM option_item_mappings
         WHERE shop_id = $1
       `,
@@ -292,18 +322,48 @@ async function getMappingContext(shopId) {
     }
   });
 
-  const posOptionItemIdByUberOptionItemId = new Map();
+  const posOptionIdByUberOptionId = new Map();
+  optionMappingResult.rows.forEach((row) => {
+    const uberOptionId = normalizeText(row.uber_option_id);
+    const posOptionId = normalizeText(row.pos_option_id);
+    if (uberOptionId && posOptionId) {
+      posOptionIdByUberOptionId.set(uberOptionId, posOptionId);
+    }
+  });
+
+  const optionItemMappingByOptionAndItem = new Map();
+  const optionItemMappingsByUberOptionItemId = new Map();
   optionItemMappingResult.rows.forEach((row) => {
+    const uberOptionId = normalizeText(row.uber_option_id);
     const uberOptionItemId = normalizeText(row.uber_option_item_id);
+    const posOptionId = normalizeText(row.pos_option_id);
     const posOptionItemId = normalizeText(row.pos_option_item_id);
     if (uberOptionItemId && posOptionItemId) {
-      posOptionItemIdByUberOptionItemId.set(uberOptionItemId, posOptionItemId);
+      if (uberOptionId) {
+        optionItemMappingByOptionAndItem.set(`${uberOptionId}::${uberOptionItemId}`, {
+          uberOptionId,
+          uberOptionItemId,
+          posOptionId,
+          posOptionItemId,
+        });
+      }
+
+      const existing = optionItemMappingsByUberOptionItemId.get(uberOptionItemId) || [];
+      existing.push({
+        uberOptionId,
+        uberOptionItemId,
+        posOptionId,
+        posOptionItemId,
+      });
+      optionItemMappingsByUberOptionItemId.set(uberOptionItemId, existing);
     }
   });
 
   return {
     posItemIdByUberItemId,
-    posOptionItemIdByUberOptionItemId,
+    posOptionIdByUberOptionId,
+    optionItemMappingByOptionAndItem,
+    optionItemMappingsByUberOptionItemId,
   };
 }
 
@@ -366,6 +426,7 @@ function buildVend88OrderPayload({ orderDetails, shopId, mappingContext }) {
   const productQtys = [];
   const optionItems = [];
   const unmappedProducts = [];
+  const unmappedOptions = [];
   const unmappedOptionItems = [];
 
   for (const item of orderItems) {
@@ -385,15 +446,49 @@ function buildVend88OrderPayload({ orderDetails, shopId, mappingContext }) {
     }
 
     const mappedOptionItemIds = [];
-    const selectedOptionItemIds = resolveSelectedOptionItemIds(item);
+    const selectedOptionSelections = resolveSelectedOptionSelections(item);
 
-    selectedOptionItemIds.forEach((uberOptionItemId) => {
-      const posOptionItemId = mappingContext.posOptionItemIdByUberOptionItemId.get(uberOptionItemId);
-      if (!posOptionItemId) {
-        unmappedOptionItems.push(`${resolveOrderItemName(item)} -> ${uberOptionItemId}`);
-        return;
+    selectedOptionSelections.forEach(({ uberOptionId, uberOptionItemId }) => {
+      let mappingEntry = null;
+
+      if (uberOptionId) {
+        const mappedPosOptionId = mappingContext.posOptionIdByUberOptionId.get(uberOptionId);
+        if (!mappedPosOptionId) {
+          unmappedOptions.push(`${resolveOrderItemName(item)} -> option ${uberOptionId}`);
+          return;
+        }
+
+        mappingEntry = mappingContext.optionItemMappingByOptionAndItem.get(
+          `${uberOptionId}::${uberOptionItemId}`
+        );
+        if (!mappingEntry) {
+          unmappedOptionItems.push(
+            `${resolveOrderItemName(item)} -> option ${uberOptionId} item ${uberOptionItemId}`
+          );
+          return;
+        }
+
+        if (
+          mappingEntry.posOptionId &&
+          mappingEntry.posOptionId !== mappedPosOptionId
+        ) {
+          unmappedOptionItems.push(
+            `${resolveOrderItemName(item)} -> option ${uberOptionId} item ${uberOptionItemId} (option mismatch)`
+          );
+          return;
+        }
+      } else {
+        const candidates = mappingContext.optionItemMappingsByUberOptionItemId.get(uberOptionItemId) || [];
+        if (candidates.length !== 1) {
+          unmappedOptionItems.push(
+            `${resolveOrderItemName(item)} -> option item ${uberOptionItemId} (ambiguous_or_missing_option)`
+          );
+          return;
+        }
+        mappingEntry = candidates[0];
       }
-      mappedOptionItemIds.push(posOptionItemId);
+
+      mappedOptionItemIds.push(mappingEntry.posOptionItemId);
     });
 
     productIds.push(posItemId);
@@ -403,6 +498,10 @@ function buildVend88OrderPayload({ orderDetails, shopId, mappingContext }) {
 
   if (unmappedProducts.length > 0) {
     throw new Error(`Missing item mappings: ${unmappedProducts.join(", ")}`);
+  }
+
+  if (unmappedOptions.length > 0) {
+    throw new Error(`Missing option mappings: ${unmappedOptions.join(", ")}`);
   }
 
   if (unmappedOptionItems.length > 0) {
