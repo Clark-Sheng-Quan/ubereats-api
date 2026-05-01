@@ -218,7 +218,6 @@ export default function MenuSyncPage() {
   const [optionModalUberPage, setOptionModalUberPage] = useState(1);
   const [selectedTargetOptionId, setSelectedTargetOptionId] = useState("");
   const [optionItemSelections, setOptionItemSelections] = useState<Record<string, string>>({});
-  const [optionItemSearchByVendId, setOptionItemSearchByVendId] = useState<Record<string, string>>({});
 
   // Load initial data only when component mounts or store/business changes
   useEffect(() => {
@@ -462,7 +461,7 @@ export default function MenuSyncPage() {
     }
   };
 
-  const handleUploadMenu = async (mode: "replace" | "merge") => {
+  const handleUploadMenu = async (mode: "replace" | "merge" | "test") => {
     if (!uberStoreId || !businessId) {
       setError("Missing store or business information");
       return;
@@ -557,9 +556,11 @@ export default function MenuSyncPage() {
   };
 
   const getUberItemNameById = (itemId: string) => {
-    const item = [...(menuData?.items || []), ...(menuData?.option_items || [])].find((it) => it.id === itemId);
-    if (!item) return "—";
-    return getText(item.title);
+    if (!itemId) return "—";
+    const cleanId = String(itemId).trim();
+    const item = [...(menuData?.items || []), ...(menuData?.option_items || [])].find((it) => String(it.id).trim() === cleanId);
+    if (!item) return cleanId;
+    return getText(item.title) || cleanId;
   };
 
   const getUberItemPriceById = (itemId: string) => {
@@ -579,9 +580,17 @@ export default function MenuSyncPage() {
   };
 
   const getModifierGroupNameById = (groupId: string) => {
-    const group = (uberOptions || []).find((g) => g.id === groupId);
-    if (!group) return groupId;
-    return getText(group.title) || groupId;
+    if (!groupId) return "—";
+    const cleanGroupId = String(groupId).trim();
+
+    const mappedName = optionMappings.find((m) => String(m.uber_option_id).trim() === cleanGroupId)?.uber_option_name;
+    if (mappedName && mappedName.trim().length > 0) {
+      return mappedName;
+    }
+
+    const group = (uberOptions || []).find((g) => String(g.id).trim() === cleanGroupId);
+    if (!group) return cleanGroupId;
+    return getText(group.title) || cleanGroupId;
   };
 
   const getUberItemOptionGroupNames = (item: MenuItem) => {
@@ -605,7 +614,7 @@ export default function MenuSyncPage() {
       }
     }
 
-    return groupIds;
+    return groupIds.map((groupId) => getModifierGroupNameById(groupId));
   };
 
   const getVend88OptionNamesFromStoredOptions = (rawOptions: unknown) => {
@@ -666,7 +675,6 @@ export default function MenuSyncPage() {
     setOptionMapStep("group");
     setSelectedTargetOptionId("");
     setOptionItemSelections({});
-    setOptionItemSearchByVendId({});
     setOptionModalUberPage(1);
     setShowOptionMapModal(true);
   };
@@ -677,8 +685,6 @@ export default function MenuSyncPage() {
     setOptionMapStep("group");
     setSelectedTargetOptionId("");
     setOptionItemSelections({});
-    setOptionItemSearchByVendId({});
-    setOptionModalUberPage(1);
     setShowOptionMapModal(true);
   };
 
@@ -689,7 +695,6 @@ export default function MenuSyncPage() {
     setOptionMapStep("group");
     setSelectedTargetOptionId("");
     setOptionItemSelections({});
-    setOptionItemSearchByVendId({});
     setOptionModalUberPage(1);
   };
 
@@ -896,6 +901,7 @@ export default function MenuSyncPage() {
       }
     });
 
+    // Auto-preselect for convenience; user can review and change before saving.
     setOptionItemSelections(defaultSelections);
     setOptionMapStep("items");
   };
@@ -1038,9 +1044,9 @@ export default function MenuSyncPage() {
         await saveOptionMapping({
           shop_id: shopId,
           pos_option_id: pair.leftId,
-          pos_option_name: pair.name,
+          pos_option_name: vendOption?.name || pair.name,
           uber_option_id: pair.rightId,
-          uber_option_name: pair.name,
+          uber_option_name: getText(uberOption?.title) || pair.name,
           vend88_item_count: vend88ItemCount,
           uber_item_count: uberItemCount,
         });
@@ -1066,14 +1072,17 @@ export default function MenuSyncPage() {
         );
 
         for (const optionItemPair of optionItemPairs) {
+          const vSubItem = (vendOption.option_items || []).find(i => i._id === optionItemPair.leftId);
+          const uSubItem = uberItems.find(i => i.id === optionItemPair.rightId);
+
           await saveOptionItemMapping({
             shop_id: shopId,
             pos_option_id: vendOption._id,
             pos_option_item_id: optionItemPair.leftId,
-            pos_option_item_name: optionItemPair.name,
+            pos_option_item_name: vSubItem?.name || optionItemPair.name,
             uber_option_id: uberOption.id,
             uber_option_item_id: optionItemPair.rightId,
-            uber_option_item_name: optionItemPair.name,
+            uber_option_item_name: uSubItem?.name || optionItemPair.name,
           });
         }
       }
@@ -2501,30 +2510,10 @@ export default function MenuSyncPage() {
 
                 <div className="space-y-3">
                   {(selectedVendOptionForModal.option_items || []).map((vendItem) => {
-                    const filterKeyword = normalizeMappingName(optionItemSearchByVendId[vendItem._id] || "");
-                    const filteredUberCandidates = uberOptionItemsForModal.filter((uberCandidate) => {
-                      if (!filterKeyword) {
-                        return true;
-                      }
-                      return normalizeMappingName(uberCandidate.name).includes(filterKeyword);
-                    });
-
                     return (
                       <div key={vendItem._id} className="border border-gray-200 rounded p-3">
                         <p className="text-sm font-semibold text-gray-900">{vendItem.name}</p>
                         <p className="text-xs text-gray-500 font-mono">{vendItem._id}</p>
-
-                        <input
-                          value={optionItemSearchByVendId[vendItem._id] || ""}
-                          onChange={(e) =>
-                            setOptionItemSearchByVendId((prev) => ({
-                              ...prev,
-                              [vendItem._id]: e.target.value,
-                            }))
-                          }
-                          placeholder="Search Uber option item name..."
-                          className="w-full mt-2 border border-gray-300 rounded px-3 py-2 text-sm"
-                        />
 
                         <select
                           value={optionItemSelections[vendItem._id] || ""}
@@ -2537,7 +2526,7 @@ export default function MenuSyncPage() {
                           className="w-full mt-2 border border-gray-300 rounded px-3 py-2 text-sm"
                         >
                           <option value="">Skip mapping</option>
-                          {filteredUberCandidates.map((uberCandidate) => (
+                          {uberOptionItemsForModal.map((uberCandidate) => (
                             <option key={uberCandidate.id} value={uberCandidate.id}>
                               {uberCandidate.name} ({uberCandidate.id})
                             </option>
@@ -2612,6 +2601,21 @@ export default function MenuSyncPage() {
                   className="mt-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Confirm Merge Upload
+                </button>
+              </div>
+
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
+                <p className="text-sm font-semibold text-gray-900">Test Upload (mapping stress test)</p>
+                <p className="text-xs text-gray-700 mt-1">
+                  Upload transformed menu: all product/option-item prices +20%; some products have name suffix only,
+                  some have ID suffix only; option groups/items get -uber suffix.
+                </p>
+                <button
+                  onClick={() => handleUploadMenu("test")}
+                  disabled={uploadingMenu}
+                  className="mt-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Confirm Test Upload
                 </button>
               </div>
             </div>

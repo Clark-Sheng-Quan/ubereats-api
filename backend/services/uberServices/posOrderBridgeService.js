@@ -180,18 +180,9 @@ function resolveOrderItems(orderDetails = {}) {
   return [];
 }
 
-function resolveUberItemCandidates(orderItem = {}) {
-  const candidates = [
-    orderItem?.id,
-    orderItem?.item_id,
-    orderItem?.item?.id,
-    orderItem?.external_data,
-    orderItem?.item?.external_data,
-  ];
-
-  return candidates
-    .map((value) => normalizeText(String(value || "")))
-    .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index);
+function resolveUberItemId(orderItem = {}) {
+  // Use id as the primary identifier
+  return normalizeText(String(orderItem?.id || ""));
 }
 
 function resolveOrderItemName(orderItem = {}) {
@@ -238,7 +229,12 @@ function resolveSelectedOptionSelections(orderItem = {}) {
   };
 
   const resolveOptionItemIdCandidates = (node = {}) => {
-    const candidates = [node?.id, node?.item_id, node?.external_data];
+    // Priority 1: Use node.id if available (this is the primary Uber Menu identifier)
+    if (node?.id) {
+      return [normalizeText(String(node.id))];
+    }
+    // Priority 2: Fallbacks for different payload shapes
+    const candidates = [node?.item_id, node?.external_data];
     return candidates
       .map((value) => normalizeText(String(value || "")))
       .filter((value, index, arr) => value.length > 0 && arr.indexOf(value) === index);
@@ -430,17 +426,12 @@ function buildVend88OrderPayload({ orderDetails, shopId, mappingContext }) {
   const unmappedOptionItems = [];
 
   for (const item of orderItems) {
-    const uberItemCandidates = resolveUberItemCandidates(item);
-    const matchedUberItemId = uberItemCandidates.find((candidate) =>
-      mappingContext.posItemIdByUberItemId.has(candidate)
-    );
-    const posItemId = matchedUberItemId
-      ? mappingContext.posItemIdByUberItemId.get(matchedUberItemId)
-      : null;
+    const uberItemId = resolveUberItemId(item);
+    const posItemId = mappingContext.posItemIdByUberItemId.get(uberItemId) || null;
 
     if (!posItemId) {
       unmappedProducts.push(
-        `${resolveOrderItemName(item)} (${uberItemCandidates.join("|") || "missing_id"})`
+        `${resolveOrderItemName(item)} (${uberItemId || "missing_id"})`
       );
       continue;
     }
@@ -497,15 +488,21 @@ function buildVend88OrderPayload({ orderDetails, shopId, mappingContext }) {
   }
 
   if (unmappedProducts.length > 0) {
-    throw new Error(`Missing item mappings: ${unmappedProducts.join(", ")}`);
+    const errorMsg = `Missing item mappings: ${unmappedProducts.join(", ")}`;
+    console.error(`[posOrderBridgeService] ❌ ${errorMsg}`);
+    throw new Error(errorMsg);
   }
 
   if (unmappedOptions.length > 0) {
-    throw new Error(`Missing option mappings: ${unmappedOptions.join(", ")}`);
+    const errorMsg = `Missing option mappings: ${unmappedOptions.join(", ")}`;
+    console.error(`[posOrderBridgeService] ❌ ${errorMsg}`);
+    throw new Error(errorMsg);
   }
 
   if (unmappedOptionItems.length > 0) {
-    throw new Error(`Missing option-item mappings: ${unmappedOptionItems.join(", ")}`);
+    const errorMsg = `Missing option-item mappings: ${unmappedOptionItems.join(", ")}`;
+    console.error(`[posOrderBridgeService] ❌ ${errorMsg}`);
+    throw new Error(errorMsg);
   }
 
   const customerInfo = resolveCustomerInfo(orderDetails);
@@ -558,10 +555,18 @@ export async function syncUberOrderToVend88({ orderId, orderDetails = {}, meta =
   const shopId = normalizeText(binding.pos_shop_id);
 
   const mappingContext = await getMappingContext(shopId);
+  console.log(`[posOrderBridgeService] 🔍 Mapping context loaded for shop ${shopId}: ${mappingContext.posItemIdByUberItemId.size} items, ${mappingContext.posOptionIdByUberOptionId.size} options`);
+
   const payload = buildVend88OrderPayload({
     orderDetails,
     shopId,
     mappingContext,
+  });
+
+  console.log(`[posOrderBridgeService] 🎫 Resolved Customer:`, {
+    name: `${payload.first_name} ${payload.last_name}`,
+    phone: payload.phone,
+    email: payload.email
   });
 
   let vend88Response;

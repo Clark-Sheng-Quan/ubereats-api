@@ -185,6 +185,10 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
         updated_at
       )
       VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())
+      ON CONFLICT (shop_id, uber_category_id) DO UPDATE SET
+        category_name = EXCLUDED.category_name,
+        raw_category = EXCLUDED.raw_category,
+        updated_at = NOW()
     `;
 
     for (const category of categories) {
@@ -211,6 +215,10 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
         updated_at
       )
       VALUES ($1, $2, $3, $4::jsonb, NOW(), NOW())
+      ON CONFLICT (shop_id, uber_modifier_group_id) DO UPDATE SET
+        modifier_group_name = EXCLUDED.modifier_group_name,
+        raw_modifier_group = EXCLUDED.raw_modifier_group,
+        updated_at = NOW()
     `;
 
     for (const modifierGroup of modifierGroups) {
@@ -219,12 +227,14 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
         continue;
       }
 
+      const mgName = extractUberText(modifierGroup?.title) || null;
       await client.query(insertModifierGroupQuery, [
         normalizedShopId,
         modifierGroupId,
-        extractUberText(modifierGroup?.title) || null,
+        mgName,
         JSON.stringify(modifierGroup || {}),
       ]);
+      modifierGroupNames.set(modifierGroupId, mgName);
     }
 
     const insertItemQuery = `
@@ -242,6 +252,15 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
         updated_at
       )
       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9::jsonb, NOW(), NOW())
+      ON CONFLICT (shop_id, uber_item_id) DO UPDATE SET
+        item_name = EXCLUDED.item_name,
+        category = EXCLUDED.category,
+        option_summary = EXCLUDED.option_summary,
+        modifier_group_ids = EXCLUDED.modifier_group_ids,
+        price_minor = EXCLUDED.price_minor,
+        status = EXCLUDED.status,
+        raw_item = EXCLUDED.raw_item,
+        updated_at = NOW()
     `;
 
     const insertOptionItemQuery = `
@@ -256,6 +275,12 @@ export async function upsertUberItemsFromMenu(shopId, menuConfig = {}) {
         updated_at
       )
       VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW(), NOW())
+      ON CONFLICT (shop_id, uber_item_id) DO UPDATE SET
+        item_name = EXCLUDED.item_name,
+        price_minor = EXCLUDED.price_minor,
+        status = EXCLUDED.status,
+        raw_item = EXCLUDED.raw_item,
+        updated_at = NOW()
     `;
 
     for (const [uberItemId, optionItem] of optionItemsById.entries()) {

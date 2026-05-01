@@ -117,6 +117,11 @@ async function handleNewOrder(resourceHref, meta) {
           store_id: syncResult.storeId,
         });
       } catch (syncError) {
+        console.error(`[webhookService] ❌ POS Sync failed for order ${orderId}:`, syncError.message);
+        if (syncError.response?.data) {
+          console.error(`[webhookService] 📄 POS Error Details:`, JSON.stringify(syncError.response.data, null, 2));
+        }
+        
         vend88Sync = {
           status: "failed",
           synced_at: new Date().toISOString(),
@@ -125,6 +130,7 @@ async function handleNewOrder(resourceHref, meta) {
 
         logAction(orderId, "vend88_order_create_failed", {
           error: syncError.message,
+          details: syncError.response?.data || null
         });
       }
     }
@@ -202,6 +208,8 @@ async function handleScheduledOrder(resourceHref, meta) {
           store_id: syncResult.storeId,
         });
       } catch (syncError) {
+        console.error(`[webhookService] ❌ POS Sync failed for order ${orderId}:`, syncError.message);
+        
         vend88Sync = {
           status: "failed",
           synced_at: new Date().toISOString(),

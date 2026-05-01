@@ -154,53 +154,71 @@ export function buildExactNamePairs(
   usedLeftIds: Set<string>,
   usedRightIds: Set<string>
 ): Array<{ leftId: string; rightId: string; name: string }> {
-  const availableRightByName = new Map<string, NameEntity[]>();
+  const pairs: Array<{ leftId: string; rightId: string; name: string }> = [];
+  
+  const remainingRightById = new Map<string, NameEntity>();
+  const remainingRightByName = new Map<string, NameEntity[]>();
 
+  // Initialize remaining Uber items
   right.forEach((entity) => {
-    if (usedRightIds.has(entity.id)) {
-      return;
+    if (!usedRightIds.has(entity.id)) {
+      remainingRightById.set(entity.id, entity);
+      
+      const key = normalizeMappingName(entity.name);
+      if (key) {
+        const existing = remainingRightByName.get(key) || [];
+        existing.push(entity);
+        remainingRightByName.set(key, existing);
+      }
     }
-
-    const key = normalizeMappingName(entity.name);
-    if (!key) {
-      return;
-    }
-
-    const existing = availableRightByName.get(key) || [];
-    existing.push(entity);
-    availableRightByName.set(key, existing);
   });
 
-  const pairs: Array<{ leftId: string; rightId: string; name: string }> = [];
+  // Helper to mark a right entity as used
+  const markAsUsed = (entity: NameEntity) => {
+    usedRightIds.add(entity.id);
+    remainingRightById.delete(entity.id);
+    
+    const key = normalizeMappingName(entity.name);
+    if (key) {
+      const list = remainingRightByName.get(key) || [];
+      const index = list.findIndex(e => e.id === entity.id);
+      if (index !== -1) {
+        list.splice(index, 1);
+      }
+    }
+  };
 
   left.forEach((entity) => {
     if (usedLeftIds.has(entity.id)) {
       return;
     }
 
-    const key = normalizeMappingName(entity.name);
-    if (!key) {
-      return;
+    let matched: NameEntity | undefined;
+
+    // Step 1: Match by ID
+    if (remainingRightById.has(entity.id)) {
+      matched = remainingRightById.get(entity.id);
     }
 
-    const candidates = availableRightByName.get(key);
-    if (!candidates || candidates.length === 0) {
-      return;
-    }
-
-    const matched = candidates.shift();
+    // Step 2: Match by Name
     if (!matched) {
-      return;
+      const key = normalizeMappingName(entity.name);
+      const candidates = remainingRightByName.get(key);
+      if (candidates && candidates.length > 0) {
+        matched = candidates[0]; // Take the first available name match
+      }
     }
 
-    usedLeftIds.add(entity.id);
-    usedRightIds.add(matched.id);
+    if (matched) {
+      usedLeftIds.add(entity.id);
+      markAsUsed(matched);
 
-    pairs.push({
-      leftId: entity.id,
-      rightId: matched.id,
-      name: entity.name,
-    });
+      pairs.push({
+        leftId: entity.id,
+        rightId: matched.id,
+        name: entity.name,
+      });
+    }
   });
 
   return pairs;

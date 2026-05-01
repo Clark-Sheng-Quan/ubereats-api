@@ -1,7 +1,7 @@
-import { getPosProducts, getPosProductsCount, getPosOptions } from "./posService";
+import { getPosProducts, getPosOptions } from "./posService";
 import { getStoreMenu, uploadMenu } from "./uberService";
 
-export type UploadMode = "replace" | "merge";
+export type UploadMode = "replace" | "merge" | "test";
 
 interface Vend88Product {
   _id: string;
@@ -45,8 +45,10 @@ interface UploadMenuResult {
 }
 
 const UBER_MAX_PRICE_CENTS = 50000;
+const TEST_SUFFIX = "-uber";
+const TEST_PRICE_MULTIPLIER = 1.2;
 
-function toMinorUnitInt(rawPrice: unknown): number {
+function toMinorUnitInt(rawPrice: unknown, multiplier: number = 1): number {
   const value = Number(rawPrice);
   if (!Number.isFinite(value) || value < 0) {
     return 0;
@@ -54,7 +56,7 @@ function toMinorUnitInt(rawPrice: unknown): number {
 
   // Vend88 prices are in major currency units (e.g. 6639 => 6639.00).
   // Uber requires minor units (cents), so always multiply by 100.
-  const normalized = Math.round(value * 100);
+  const normalized = Math.round(value * 100 * Math.max(0, multiplier));
 
   if (normalized > UBER_MAX_PRICE_CENTS) {
     return UBER_MAX_PRICE_CENTS;
@@ -63,43 +65,8 @@ function toMinorUnitInt(rawPrice: unknown): number {
 }
 
 async function fetchAllVend88Products(token: string, businessId: string): Promise<Vend88Product[]> {
-  const pageSize = 100;
-  const expectedTotal = await getPosProductsCount(token, businessId);
-  const allProducts: Vend88Product[] = [];
-  const seenIds = new Set<string>();
-
-  for (let pageIdx = 0; pageIdx < 1000; pageIdx++) {
-    const page = await getPosProducts(token, businessId, pageSize, pageIdx);
-    const pageItems = page.products || [];
-
-    if (pageItems.length === 0) {
-      break;
-    }
-
-    let newItemsInThisPage = 0;
-    pageItems.forEach((item) => {
-      if (!item?._id || seenIds.has(item._id)) {
-        return;
-      }
-      seenIds.add(item._id);
-      allProducts.push(item);
-      newItemsInThisPage += 1;
-    });
-
-    if (newItemsInThisPage === 0) {
-      break;
-    }
-
-    if (expectedTotal > 0 && allProducts.length >= expectedTotal) {
-      break;
-    }
-
-    if (pageItems.length < pageSize) {
-      break;
-    }
-  }
-
-  return allProducts;
+  const allProducts = await getPosProducts(token, businessId);
+  return allProducts.products || [];
 }
 
 async function fetchAllVend88Options(token: string, businessId: string): Promise<Vend88Option[]> {
@@ -108,35 +75,76 @@ async function fetchAllVend88Options(token: string, businessId: string): Promise
   return response.options || [];
 }
 
-function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[]): UberMenuConfig {
-  const optionMapById = new Map<string, Vend88Option>();
-  const optionMapByName = new Map<string, Vend88Option>();
+function buildVend88MenuConfig(
+  products: Vend88Product[],
+  options: Vend88Option[],
+  mode: UploadMode
+): UberMenuConfig {
+  const isTestMode = mode === "test";
+  const priceMultiplier = isTestMode ? TEST_PRICE_MULTIPLIER : 1;
+
+  // Deduplicate options by _id to ensure stable transformations
+  const uniqueOptionsMap = new Map<string, Vend88Option>();
   options.forEach((opt) => {
-    optionMapById.set(opt._id, opt);
+    if (opt._id && !uniqueOptionsMap.has(opt._id)) {
+      uniqueOptionsMap.set(opt._id, opt);
+    }
+  });
+  const uniqueOptions = Array.from(uniqueOptionsMap.values());
+
+  const optionTransformedIdBySourceId = new Map<string, string>();
+  const optionTransformedNameBySourceId = new Map<string, string>();
+  uniqueOptions.forEach((option, index) => {
+    const sourceId = option._id;
+    const sourceName = option.name || "Option Group";
+
+    // Test rule for option groups:
+    // even index: name + -uber (ID unchanged)
+    // odd index: ID + -uber (name unchanged)
+    const transformedId = isTestMode && index % 2 === 1 ? `${sourceId}${TEST_SUFFIX}` : sourceId;
+    const transformedName = isTestMode && index % 2 === 0 ? `${sourceName}${TEST_SUFFIX}` : sourceName;
+
+    optionTransformedIdBySourceId.set(sourceId, transformedId);
+    optionTransformedNameBySourceId.set(sourceId, transformedName);
+  });
+
+  const resolveOptionId = (option: Vend88Option) =>
+    optionTransformedIdBySourceId.get(option._id) || option._id;
+  const resolveOptionName = (option: Vend88Option) =>
+    optionTransformedNameBySourceId.get(option._id) || option.name || "Option Group";
+  const resolveOptionItemId = (item: { _id: string }) =>
+    isTestMode ? `${item._id}${TEST_SUFFIX}` : item._id;
+  const resolveOptionItemName = (item: { name?: string }) =>
+    item.name || "Option Item";
+
+  const optionIdBySourceId = new Map<string, string>();
+  const optionIdBySourceName = new Map<string, string>();
+  uniqueOptions.forEach((opt) => {
+    const transformedId = resolveOptionId(opt);
+    optionIdBySourceId.set(opt._id, transformedId);
     if (opt.name) {
-      optionMapByName.set(opt.name.trim().toLowerCase(), opt);
+      optionIdBySourceName.set(opt.name.trim().toLowerCase(), transformedId);
     }
   });
 
   const optionItems: any[] = [];
   const optionItemsBySourceId = new Map<string, string>();
 
-  options.forEach((opt) => {
+  uniqueOptions.forEach((opt) => {
     (opt.option_items || []).forEach((item) => {
       const sourceId = item._id;
       if (optionItemsBySourceId.has(sourceId)) {
         return;
       }
 
-      const uberItemId = sourceId;
+      const uberItemId = resolveOptionItemId(item);
       optionItemsBySourceId.set(sourceId, uberItemId);
 
       optionItems.push({
         id: uberItemId,
-        external_data: sourceId,
         title: {
           translations: {
-            en_us: item.name || "Option Item",
+            en_us: resolveOptionItemName(item),
           },
         },
         description: {
@@ -145,7 +153,7 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
           },
         },
         price_info: {
-          price: toMinorUnitInt(item.price_adjust ?? item.price ?? 0),
+          price: toMinorUnitInt(item.price_adjust ?? item.price ?? 0, priceMultiplier),
           overrides: [],
         },
         suspension_info: {
@@ -155,12 +163,11 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
     });
   });
 
-  const modifierGroups = options.map((opt) => ({
-    id: opt._id,
-    external_data: opt._id,
+  const modifierGroups = uniqueOptions.map((opt) => ({
+    id: resolveOptionId(opt),
     title: {
       translations: {
-        en_us: opt.name || "Option Group",
+        en_us: resolveOptionName(opt),
       },
     },
     display_type: "expanded",
@@ -174,11 +181,11 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
           type: "ITEM",
           title: {
             translations: {
-              en_us: item.name || "Option Item",
+              en_us: resolveOptionItemName(item),
             },
           },
           price_info: {
-            price: toMinorUnitInt(item.price_adjust ?? item.price ?? 0),
+            price: toMinorUnitInt(item.price_adjust ?? item.price ?? 0, priceMultiplier),
             overrides: [],
           },
         };
@@ -186,7 +193,21 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
       .filter(Boolean),
   }));
 
-  const baseItems = products.map((product) => {
+  // Deduplicate products by _id to ensure stable transformations
+  const uniqueProductsMap = new Map<string, Vend88Product>();
+  products.forEach((p) => {
+    if (p._id && !uniqueProductsMap.has(p._id)) {
+      uniqueProductsMap.set(p._id, p);
+    }
+  });
+  const uniqueProducts = Array.from(uniqueProductsMap.values());
+
+  const baseItems = uniqueProducts.map((product, index) => {
+    const transformedProductId =
+      isTestMode && index % 2 === 1 ? `${product._id}${TEST_SUFFIX}` : product._id;
+    const transformedProductName =
+      isTestMode && index % 2 === 0 ? `${product.name || "Untitled Item"}${TEST_SUFFIX}` : product.name || "Untitled Item";
+
     const linkedGroupIds = Array.from(
       new Set(
         (product.options || [])
@@ -194,12 +215,12 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
             const rawId = o?._id || o?.id;
             const rawName = typeof o?.name === "string" ? o.name.trim().toLowerCase() : "";
 
-            if (rawId && optionMapById.has(rawId)) {
-              return rawId;
+            if (rawId && optionIdBySourceId.has(rawId)) {
+              return optionIdBySourceId.get(rawId) || null;
             }
 
-            if (rawName && optionMapByName.has(rawName)) {
-              return optionMapByName.get(rawName)!._id;
+            if (rawName && optionIdBySourceName.has(rawName)) {
+              return optionIdBySourceName.get(rawName) || null;
             }
 
             return null;
@@ -209,11 +230,10 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
     );
 
     return {
-      id: product._id,
-      external_data: product.sku || undefined,
+      id: transformedProductId,
       title: {
         translations: {
-          en_us: product.name || "Untitled Item",
+          en_us: transformedProductName,
         },
       },
       description: {
@@ -223,7 +243,7 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
       },
       image_url: product.image_url || undefined,
       price_info: {
-        price: toMinorUnitInt(product.price),
+        price: toMinorUnitInt(product.price, priceMultiplier),
         overrides: [],
       },
       nutritional_info:
@@ -267,7 +287,10 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
 
     normalizedCategories.forEach((categoryName) => {
       const existing = categoryToItemIds.get(categoryName) || [];
-      existing.push(product._id);
+      const index = products.findIndex((p) => p._id === product._id);
+      const transformedProductId =
+        isTestMode && index % 2 === 1 ? `${product._id}${TEST_SUFFIX}` : product._id;
+      existing.push(transformedProductId);
       categoryToItemIds.set(categoryName, existing);
     });
   });
@@ -303,7 +326,7 @@ function buildVend88MenuConfig(products: Vend88Product[], options: Vend88Option[
         id: vend88MenuId,
         title: {
           translations: {
-            en_us: "Vend88 Menu",
+            en_us: isTestMode ? "Vend88 Menu Test" : "Vend88 Menu",
           },
         },
         service_availability: [
@@ -484,10 +507,10 @@ export async function uploadVend88MenuToUber(params: UploadMenuParams): Promise<
     fetchAllVend88Options(posToken, businessId),
   ]);
 
-  const vend88Config = buildVend88MenuConfig(allProducts, allOptions);
+  const vend88Config = buildVend88MenuConfig(allProducts, allOptions, mode);
 
   let menuToUpload: UberMenuConfig;
-  if (mode === "replace") {
+  if (mode === "replace" || mode === "test") {
     menuToUpload = vend88Config;
   } else {
     const existing = (await getStoreMenu(storeId)) as UberMenuConfig;
