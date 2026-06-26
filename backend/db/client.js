@@ -20,10 +20,12 @@ const schemaQueries = [
   `CREATE TABLE IF NOT EXISTS uber_oauth_tokens (
     id SMALLINT PRIMARY KEY DEFAULT 1,
     access_token TEXT,
+    refresh_token TEXT,
     expires_at BIGINT,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (id = 1)
   )`,
+  `ALTER TABLE uber_oauth_tokens ADD COLUMN IF NOT EXISTS refresh_token TEXT`,
   `CREATE TABLE IF NOT EXISTS uber_connections_db (
     id BIGSERIAL PRIMARY KEY,
     shop_id TEXT NOT NULL UNIQUE,

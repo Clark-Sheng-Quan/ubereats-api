@@ -24,6 +24,7 @@ import {
   removeIntegrationConfiguration,
 } from "../../services/uberServices/integrationService.js";
 import { UBER_CONFIG, UBER_API_BASE_URL } from "../../config/config.js";
+import { saveOAuthTokens } from "../../utils/tokenManager.js";
 
 const router = express.Router();
 
@@ -86,6 +87,13 @@ router.post("/oauth/callback", async (req, res) => {
 
     const accessToken = tokenResponse.data.access_token;
     const refreshToken = tokenResponse.data.refresh_token;
+
+    // Save to global token manager so webhook/order operations can auto-refresh
+    await saveOAuthTokens({
+      accessToken,
+      refreshToken,
+      expiresIn: tokenResponse.data.expires_in || TOKEN_LIFETIME_SECONDS,
+    });
 
     // Get Uber store information
     // From: Store API (1.0.0) - GET /v1/delivery/stores endpoint
